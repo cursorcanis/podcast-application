@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Episode Library — Podcast Foundry{% endblock %}
+{% block content %}
+
+<h2>Episode Library</h2>
+<p class="meta">
+  <a href="/episodes">All</a> ·
+  <a href="/episodes?status=sources_pending_approval">Awaiting source approval</a> ·
+  <a href="/episodes?status=sources_approved">Sources approved</a> ·
+  <a href="/episodes?status=script_ready">Script ready</a>
+</p>
+
+{% if not episodes %}
+<div class="card">
+  <p>No episodes yet. <a href="/episodes/new">Create one</a>.</p>
+</div>
+{% endif %}
+
+{% for ep in episodes %}
+<div class="card episode-row">
+  <h3><a href="/episodes/{{ ep.id }}">{{ ep.title }}</a></h3>
+  <p class="meta">
+    <span class="status-pill status-{{ ep.status }}">{{ ep.status }}</span>
+    · {{ ep.format }} · {{ ep.length_minutes_target }} min · speed {{ ep.speed }}x
+    · sources: {{ ep.source_counts.approved or 0 }} approved /
+      {{ ep.source_counts.pending or 0 }} pending /
+      {{ ep.source_counts.removed or 0 }} removed
+  </p>
+  <p class="meta">{{ ep.topic_or_query }}</p>
+</div>
+{% endfor %}
+
+{% endblock %}

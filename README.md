@@ -6,22 +6,38 @@ script review, ComfyUI voice rendering, ffmpeg mastering, QA, and delivery.
 This repo is being built milestone by milestone; see the table below for what
 works today.
 
-## Current status — M1 (Status / Settings screen)
+## Current status — M2 (episode intake, Board source gate, hand-entered script)
 
-- FastAPI + SQLite app skeleton.
-- **Status / Settings** screen at `http://127.0.0.1:8000` with:
-  - a live ComfyUI reachability probe against `COMFYUI_URL` (polls every 10s;
-    shows the measured result and the documented fallback order on failure —
-    today ComfyUI is not running, so the honest red **UNREACHABLE** state is
-    what you should see);
-  - the configured caps (`MAX_RENDER_HOURS`, `CHUNK_TIMEOUT_MIN`,
-    `MAX_ATTACHMENT_MB`);
-  - the **$0 / free-only budget** banner;
-  - the standing **email delivery paused — see POD-7** notice.
-- `render_jobs` / `render_chunks` / episode schema is created on startup
-  (SQLite under `data/`), so later milestones build on a settled shape.
+- FastAPI + SQLite app skeleton (M1).
+- **Status / Settings** screen at `http://127.0.0.1:8000` with the live
+  ComfyUI reachability probe, the configured caps, the $0/free-only budget
+  banner, and the standing **email delivery paused — see POD-7** notice.
+- **New Episode** (`/episodes/new`) — query/URL entry; settings (format,
+  tone, cadence, speed 0.8x–1.3x, target length, audience level); voice
+  label(s) (plain text — the saved voice-profile picker arrives later);
+  recipients, restricted to `DEFAULT_RECIPIENTS` or a saved recipient list —
+  a typed-in address outside that set is rejected server-side, not just
+  hidden in the UI.
+- **Source Review** (`/episodes/{id}/sources`) — the Board gate. A standing
+  page, not a modal: add hand-entered/pasted candidate sources, approve or
+  remove each, and close the gate once every source has a decision and at
+  least one is approved. The decision persists in SQLite across sessions.
+  **No later stage is reachable until the gate closes** — enforced in the
+  route handlers, not only hidden in the UI, so a direct POST to a
+  later-stage route is refused the same way.
+- **Script Review** (`/episodes/{id}/script`) — locked until the source gate
+  closes. Paste in outline/script text and a citation map produced outside
+  the app for now (no automatic generation yet — open Board decision, see
+  build plan Risk R5). "Mark script ready" moves the episode to
+  `script_ready`.
+- **Episode Library** (`/episodes`) — every episode, filterable by status,
+  with a detail view (settings, source-gate state, script/citation map once
+  ready).
+- `render_jobs` / `render_chunks` schema exists (SQLite under `data/`) for
+  the M3 render pipeline; nothing writes to it yet.
 
-Not yet: episodes, rendering, ffmpeg, QA, email. Those are M2–M6.
+Not yet: rendering, ffmpeg mastering, QA, email, voice-profile picker,
+presets, saved recipient-list management. Those are M3–M6.
 
 ## Prerequisites (Windows)
 
@@ -71,9 +87,13 @@ No credential value is stored, logged, or displayed by this application.
 python -m pytest tests/ -q
 ```
 
-`tests/test_smoke.py` checks the screen renders all M1 elements, the API shape,
-and that the ComfyUI probe fails loud with the fallback order when the URL is
-unreachable.
+`tests/test_smoke.py` checks the M1 Status screen and the ComfyUI probe.
+`tests/test_episodes.py` walks one episode from intake through the source
+gate and a pasted script to `script_ready` (the M2 demoable outcome), and
+checks the gate's hard boundaries: a recipient outside `DEFAULT_RECIPIENTS`
+is rejected, an out-of-range speed is rejected, and script review/source
+mutation stay refused outside their valid episode status, even via a direct
+POST.
 
 ## Development notes
 
@@ -87,14 +107,19 @@ unreachable.
 ## Project layout
 
 ```
-app/__init__.py        FastAPI app + routes (/ , /api/status, /api/comfyui/status, /healthz)
+app/__init__.py        FastAPI app + M1 routes (/ , /api/status, /api/comfyui/status, /healthz)
 app/config.py          non-secret settings loader (env-first, confirmed defaults)
 app/db.py              SQLite schema bootstrap (plan section 3)
 app/comfyui.py         ComfyUI reachability probe (M1) and render path (M3)
+app/episodes.py        M2 domain logic: intake, source gate, script review
+app/routes_episodes.py M2 routes: /episodes, /episodes/{id}/sources, /episodes/{id}/script
+app/web.py             shared Jinja2Templates instance
 config/app_config.json   the 18 Board-confirmed values (no credentials)
-templates/             Jinja2 templates (base, status)
+templates/             Jinja2 templates (base, status, episodes_list, episode_new,
+                       episode_detail, episode_sources, episode_script)
 static/                style.css, status.js (measured polling, no spinner)
 tests/test_smoke.py    M1 smoke tests
+tests/test_episodes.py M2 smoke tests (intake -> source gate -> script_ready)
 start_app.bat          Windows launcher
 .env.example           env var NAMES only
 app.py / config.py / db.py   superseded fail-loud stubs at repo root (see below)

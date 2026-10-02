@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}{{ episode.title }} — Podcast Foundry{% endblock %}
+{% block content %}
+
+<h2>{{ episode.title }}</h2>
+<p><span class="status-pill status-{{ episode.status }}">{{ episode.status }}</span></p>
+
+<div class="card">
+  <h3>Settings</h3>
+  <ul>
+    <li>Topic / query: {{ episode.topic_or_query }}</li>
+    <li>Format: {{ episode.format }}</li>
+    <li>Tone: {{ episode.tone or "(default)" }}</li>
+    <li>Cadence: {{ episode.cadence }}</li>
+    <li>Speed: {{ episode.speed }}x</li>
+    <li>Target length: {{ episode.length_minutes_target }} minutes</li>
+    <li>Audience level: {{ episode.audience_level or "(unspecified)" }}</li>
+    <li>Voices: {{ episode.voice_profile_ids | join(", ") if episode.voice_profile_ids else "(none entered)" }}</li>
+    <li>Recipients: {{ episode.recipient_emails | join(", ") }}</li>
+    {% if episode.defaults_applied %}
+    <li>Defaults applied (not explicitly set by the Board): {{ episode.defaults_applied | join(", ") }}</li>
+    {% endif %}
+  </ul>
+</div>
+
+<div class="card">
+  <h3>Source Review (Board gate)</h3>
+  <p class="meta">
+    {{ gate.total }} source(s) — {{ gate.approved_count }} approved,
+    {{ gate.removed_count }} removed, {{ gate.pending_count }} pending.
+  </p>
+  {% if episode.status == 'sources_pending_approval' %}
+  <p><span class="status-pill checking">OPEN</span> — no later stage reachable until closed.</p>
+  {% else %}
+  <p><span class="status-pill ok">CLOSED</span></p>
+  {% endif %}
+  <p><a href="/episodes/{{ episode.id }}/sources">
+    {% if episode.status == 'sources_pending_approval' %}Review sources{% else %}View decided sources{% endif %}
+  </a></p>
+</div>
+
+<div class="card">
+  <h3>Script Review</h3>
+  {% if episode.status == 'sources_pending_approval' %}
+  <p class="meta">Locked until the source gate closes.</p>
+  {% else %}
+  <p>
+    Outline: {% if docs.outline %}saved{% else %}not saved{% endif %} ·
+    Script: {% if docs.script %}saved{% else %}not saved{% endif %} ·
+    Citation map: {% if docs.citation_map %}saved{% else %}not saved{% endif %}
+  </p>
+  <p><a href="/episodes/{{ episode.id }}/script">
+    {% if episode.status == 'script_ready' %}View script{% else %}Review script{% endif %}
+  </a></p>
+  {% endif %}
+</div>
+
+{% if episode.status == 'script_ready' %}
+<div class="card">
+  <h3>Script (final, saved)</h3>
+  <div class="detail">{{ docs.script.body }}</div>
+</div>
+{% if docs.citation_map %}
+<div class="card">
+  <h3>Citation map</h3>
+  <div class="detail">{{ docs.citation_map.body }}</div>
+</div>
+{% endif %}
+<div class="banner ok">
+  Status: script_ready. Rendering, mastering, QA, and email delivery are
+  later milestones (M3-M5) — not yet built.
+</div>
+{% endif %}
+
+{% endblock %}

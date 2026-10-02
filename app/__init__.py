@@ -13,6 +13,11 @@ $0/free-only budget banner, and the standing 'email delivery paused — see
 POD-7' notice. Fails loud and specific: the check surfaces the exact error
 and the documented fallback order, never 'something went wrong'.
 
+M2 scope (POD-9): episode intake, the Board source-approval gate, and
+hand-entered script review (app/episodes.py, app/routes_episodes.py) —
+everything hand-entered, no automatic research or script generation
+(Risk R5). No rendering, no email.
+
 Run:  uvicorn app:app --reload        (or start_app.bat / run.bat on Windows)
 """
 from __future__ import annotations
@@ -24,16 +29,17 @@ from typing import Any
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 
 from . import comfyui, db
 from .config import config
+from .routes_episodes import router as episodes_router
+from .web import templates
 
-app = FastAPI(title="Podcast Foundry", version="0.1.0-m1")
+app = FastAPI(title="Podcast Foundry", version="0.2.0-m2")
+app.include_router(episodes_router)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
-templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 # Ensure the SQLite state file exists at startup (repo/data/, gitignored) so
 # the Status screen's DB-backed checks never crash a fresh checkout. Later

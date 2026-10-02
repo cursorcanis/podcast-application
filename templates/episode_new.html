@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block title %}New Episode — Podcast Foundry{% endblock %}
+{% block content %}
+
+<h2>New Episode</h2>
+<p class="meta">
+  Hand-entered intake only — no automatic source discovery or script
+  generation yet (open Board decision, see build plan Risk R5). After you
+  submit, you land on the Source Review gate, which the Board must close
+  before Script Review is reachable.
+</p>
+
+{% if error %}<div class="banner error">{{ error }}</div>{% endif %}
+
+<form method="post" action="/episodes" class="card form">
+  <label>Title
+    <input type="text" name="title" required>
+  </label>
+
+  <label>Topic / query / source URLs
+    <textarea name="topic_or_query" rows="3" required
+      placeholder="A research question, or one URL per line."></textarea>
+  </label>
+
+  <fieldset>
+    <legend>Format</legend>
+    <label class="inline">
+      <select name="format" id="format-select">
+        {% for fmt in valid_formats %}
+        <option value="{{ fmt }}" {% if fmt == 'solo' %}selected{% endif %}>{{ fmt }}</option>
+        {% endfor %}
+      </select>
+    </label>
+  </fieldset>
+
+  <div class="grid-2">
+    <label>Tone
+      <input type="text" name="tone" placeholder="e.g. investigative, conversational">
+    </label>
+    <label>Cadence
+      <input type="text" name="cadence" placeholder="default: conversational">
+    </label>
+    <label>Speed ({{ min_speed }}x – {{ max_speed }}x)
+      <input type="number" name="speed" min="{{ min_speed }}" max="{{ max_speed }}"
+        step="0.05" value="{{ default_speed }}">
+    </label>
+    <label>Target length (minutes)
+      <input type="number" name="length_minutes_target" min="{{ min_length }}"
+        max="{{ max_length }}" value="{{ default_length }}">
+    </label>
+    <label>Audience level
+      <select name="audience_level">
+        <option value="">(unspecified)</option>
+        {% for level in valid_audience_levels %}
+        <option value="{{ level }}">{{ level }}</option>
+        {% endfor %}
+      </select>
+    </label>
+  </div>
+
+  <fieldset>
+    <legend>Voice label(s)</legend>
+    <p class="meta">
+      Plain text for now — the saved voice-profile picker tied to ComfyUI
+      reference clips arrives in a later milestone. Describe the voice(s)
+      you intend to use (e.g. "Dana — warm, measured female").
+    </p>
+    <label id="voice-1-label">Host voice
+      <input type="text" name="voice_1" placeholder="Host voice">
+    </label>
+    <label id="voice-2-label" style="display:none;">Host B voice
+      <input type="text" name="voice_2" placeholder="Host B voice">
+    </label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Recipients</legend>
+    <p class="meta">
+      Only DEFAULT_RECIPIENTS or a saved recipient list — never a typed-in
+      address. (Email delivery itself is paused, see POD-7; recipients are
+      still recorded now for when delivery resumes.)
+    </p>
+    {% for email in allowed_recipients %}
+    <label class="inline checkbox">
+      <input type="checkbox" name="recipient_emails" value="{{ email }}"
+        {% if email in default_recipients %}checked{% endif %}>
+      {{ email }}
+    </label>
+    {% endfor %}
+  </fieldset>
+
+  <button type="submit">Create episode</button>
+</form>
+
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  var fmt = document.getElementById("format-select");
+  var voice2 = document.getElementById("voice-2-label");
+  function sync() {
+    voice2.style.display = fmt.value === "two_host" ? "" : "none";
+  }
+  fmt.addEventListener("change", sync);
+  sync();
+})();
+</script>
+{% endblock %}

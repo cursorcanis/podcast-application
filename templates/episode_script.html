@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Script Review — {{ episode.title }}{% endblock %}
+{% block content %}
+
+<h2>Script Review — {{ episode.title }}</h2>
+<p class="meta"><a href="/episodes/{{ episode.id }}">&larr; Episode detail</a></p>
+
+{% if not gate_closed %}
+<div class="banner warn">
+  LOCKED — the source gate is still open. Script Review is not reachable
+  until the Board closes it on the
+  <a href="/episodes/{{ episode.id }}/sources">Source Review</a> page.
+</div>
+{% else %}
+
+{% if error %}<div class="banner error">{{ error }}</div>{% endif %}
+
+<p class="meta">
+  Paste outline/script text produced outside the app for now — no automatic
+  generation yet (build plan Risk R5). Saving does not change status; use
+  "Mark script ready" once the script text is final.
+</p>
+
+<form method="post" action="/episodes/{{ episode.id }}/script/save" class="card form">
+  <label>Outline
+    <textarea name="outline" rows="6">{{ docs.outline.body if docs.outline else '' }}</textarea>
+  </label>
+  <label>Script (use [HOST_A]/[HOST_B] speaker tags and [PAUSE:0.5s] timing tags)
+    <textarea name="script" rows="16">{{ docs.script.body if docs.script else '' }}</textarea>
+  </label>
+  <label>Citation map (script paragraph -&gt; source URL)
+    <textarea name="citation_map" rows="6">{{ docs.citation_map.body if docs.citation_map else '' }}</textarea>
+  </label>
+  <button type="submit">Save draft</button>
+</form>
+
+<form method="post" action="/episodes/{{ episode.id }}/script/ready" class="card">
+  <p class="meta">Requires non-empty, saved script text.</p>
+  <button type="submit" {% if episode.status == 'script_ready' %}disabled{% endif %}>
+    {% if episode.status == 'script_ready' %}Script is ready{% else %}Mark script ready{% endif %}
+  </button>
+</form>
+
+{% endif %}
+
+{% endblock %}

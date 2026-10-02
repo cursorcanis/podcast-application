@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}Source Review — {{ episode.title }}{% endblock %}
+{% block content %}
+
+<h2>Source Review — {{ episode.title }}</h2>
+<p class="meta"><a href="/episodes/{{ episode.id }}">&larr; Episode detail</a></p>
+
+{% if gate_open %}
+<div class="banner warn">
+  BOARD GATE — OPEN. No later stage (Script Review) is reachable until every
+  source below has an explicit Approve/Remove decision and at least one is
+  approved, then the gate is closed.
+</div>
+{% else %}
+<div class="banner ok">
+  Gate closed. Decisions below are final for this episode; only approved
+  sources are usable for the script.
+</div>
+{% endif %}
+
+{% if error %}<div class="banner error">{{ error }}</div>{% endif %}
+
+<div class="card">
+  <p class="meta">
+    {{ gate.total }} source(s) — {{ gate.approved_count }} approved,
+    {{ gate.removed_count }} removed, {{ gate.pending_count }} pending decision.
+  </p>
+</div>
+
+{% for s in sources %}
+<div class="card source-row">
+  <h3>{{ s.title }}</h3>
+  <p class="meta">
+    {{ s.publication or "—" }} · {{ s.published_at or "no date" }}
+    {% if s.url %} · <a href="{{ s.url }}" target="_blank" rel="noopener">{{ s.url }}</a>{% endif %}
+  </p>
+  {% if s.summary %}<p>{{ s.summary }}</p>{% endif %}
+  {% if s.credibility_note %}<p class="meta">Credibility/bias note: {{ s.credibility_note }}</p>{% endif %}
+  <p>
+    {% if s.board_decision == 'approved' or s.board_decision == 'added' %}
+      <span class="status-pill ok">APPROVED</span>
+    {% elif s.board_decision == 'removed' %}
+      <span class="status-pill bad">REMOVED</span>
+    {% else %}
+      <span class="status-pill checking">PENDING</span>
+    {% endif %}
+  </p>
+  {% if gate_open %}
+  <form method="post" action="/episodes/{{ episode.id }}/sources/{{ s.id }}/decide" class="inline">
+    <button type="submit" name="decision" value="approved">Approve</button>
+    <button type="submit" name="decision" value="removed">Remove</button>
+  </form>
+  {% endif %}
+</div>
+{% endfor %}
+
+{% if gate_open %}
+<div class="card">
+  <h3>Add a candidate source</h3>
+  <form method="post" action="/episodes/{{ episode.id }}/sources/add" class="form">
+    <label>Title
+      <input type="text" name="title" required>
+    </label>
+    <div class="grid-2">
+      <label>Publication
+        <input type="text" name="publication">
+      </label>
+      <label>Published date
+        <input type="text" name="published_at" placeholder="e.g. 2026-09-14">
+      </label>
+    </div>
+    <label>URL
+      <input type="url" name="url">
+    </label>
+    <label>Summary (2-3 sentences)
+      <textarea name="summary" rows="2"></textarea>
+    </label>
+    <label>Credibility / bias note
+      <textarea name="credibility_note" rows="2"></textarea>
+    </label>
+    <button type="submit">Add source</button>
+  </form>
+</div>
+
+<div class="card">
+  <h3>Close the gate</h3>
+  <p class="meta">
+    Requires every source above to have an explicit decision and at least
+    one approved. This cannot be undone from this screen.
+  </p>
+  <form method="post" action="/episodes/{{ episode.id }}/sources/close">
+    <button type="submit" {% if not gate.can_close %}disabled{% endif %}>
+      Approve sources &amp; close gate
+    </button>
+  </form>
+</div>
+{% endif %}
+
+{% endblock %}

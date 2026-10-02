@@ -10,7 +10,9 @@ up after a break). It is required by the Board's configuration decision
 A local web app that drives the Podcast Foundry episode pipeline end to end:
 episode intake, the Board's source-approval gate, script review, ComfyUI voice
 rendering, ffmpeg mastering, QA, and delivery — see `README.md` for the
-feature-by-feature status (currently **M1** — the Status/Settings screen only).
+feature-by-feature status (currently **M2** — episode intake, the Board
+source-approval gate, and hand-entered script review, on top of M1's
+Status/Settings screen).
 
 ## Clone → running, on a clean Windows machine
 
@@ -25,6 +27,13 @@ feature-by-feature status (currently **M1** — the Status/Settings screen only)
    `COMFYUI_URL` (default `http://127.0.0.1:8188`), the screen honestly shows
    a red **UNREACHABLE** state with the exact error and a fallback checklist —
    that is expected, not a bug, until ComfyUI is started.
+5. Click **New Episode** in the nav, submit the intake form, and you land on
+   **Source Review** (the Board gate) for that episode. Add a source,
+   Approve or Remove it, then "Approve sources & close gate" once every
+   source has a decision and at least one is approved. That unlocks
+   **Script Review**, where you paste outline/script/citation-map text and
+   click "Mark script ready." The episode now shows `script_ready` in the
+   **Episode Library**.
 
 No Node/npm, no database server, no other runtime dependency for this
 milestone. `ffmpeg` is required starting at M4 (mastering/export), not before.
@@ -55,8 +64,14 @@ mail today.
 ## Verification status (be honest about what has and hasn't run)
 
 - **Verified in this repo, WSL2-side (`/mnt/c` mount of this same folder):**
-  `python -m pytest tests/ -q` (9/9 passing) and a live `uvicorn` run serving
-  the Status screen with a real (negative) ComfyUI reachability probe.
+  `python -m pytest tests/ -q` (15/15 passing: 9 M1 + 6 M2). The 6 M2 tests
+  walk one episode through intake, a two-source gate (one approved, one
+  removed), script save, and `script_ready` via `TestClient`, and check that
+  a non-default-list recipient, an out-of-range speed, and a source
+  add/decide/close attempted after the gate has closed are each rejected.
+  Also manually walked the identical flow with `curl` against a live
+  `uvicorn` process on a scratch port, including the three rejection cases,
+  before writing the automated tests.
 - **Not yet verified:** the native-Windows double-click path
   (`start_app.bat`, Windows path separators, long-path limits). WSL-side
   testing proves the Python logic; it does not prove the Windows experience.
