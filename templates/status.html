@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Status / Settings — Podcast Foundry{% endblock %}
+{% block content %}
+
+<div class="banner budget">
+  MONTHLY BUDGET ${{ settings.monthly_budget }} — free/open resources only, no paid services.
+</div>
+<div class="banner email-paused">
+  EMAIL DELIVERY PAUSED — Board decision (see POD-7). No send path is active; episodes hand off via SHARE_LOCATION.
+</div>
+
+<section class="card comfyui">
+  <h2>ComfyUI — connectivity</h2>
+  <p class="url">{{ settings.comfyui_url }}</p>
+  <div id="comfyui-status" class="status-pill checking">Checking…</div>
+  <div id="comfyui-detail" class="detail"></div>
+  <p class="meta">Live probe, measured at <span id="checked-at">—</span>; refreshes every 10s. Never a guessed state.</p>
+</section>
+
+<section class="cards">
+  <div class="card">
+    <h3>MAX_RENDER_HOURS</h3>
+    <p class="big">{{ settings.max_render_hours }}</p>
+    <p class="cap-note">Render-time cap; a projection over this requires explicit confirmation before submission.</p>
+  </div>
+  <div class="card">
+    <h3>CHUNK_TIMEOUT_MIN</h3>
+    <p class="big">{{ settings.chunk_timeout_min }}</p>
+    <p class="cap-note">Per-chunk timeout before backoff-and-retry (halving chunk size on OOM).</p>
+  </div>
+  <div class="card">
+    <h3>MAX_ATTACHMENT_MB</h3>
+    <p class="big">{{ settings.max_attachment_mb }}</p>
+    <p class="cap-note">Email attachment size limit.</p>
+  </div>
+</section>
+
+<section class="card">
+  <h2>Paths &amp; delivery (confirmed in configuration; env-var overridable)</h2>
+  <ul>
+    <li><strong>OUTPUT_FOLDER</strong>: {{ settings.output_folder }}</li>
+    <li><strong>SHARE_LOCATION</strong>: {{ settings.share_location }}</li>
+    <li><strong>EMAIL_METHOD</strong>: {{ settings.email_method or 'none (paused)' }}</li>
+    <li><strong>TTS model</strong>: {{ settings.tts_model }}</li>
+  </ul>
+  <p class="meta">Secrets, when they exist, come only from environment variables — never a value here or in the repo.</p>
+</section>
+
+{% endblock %}

@@ -1,0 +1,23 @@
+{
+  "_meta": {
+    "config_revision": "POD-2 configuration document, revision 6 (2026-10-02)",
+    "note": "Board-confirmed values only. No credential may ever be stored here; future secrets come exclusively from the environment (see app/config.py ENV_ONLY_KEYS)."
+  },
+  "COMFYUI_URL": "http://127.0.0.1:8188",
+  "COMFYUI_VERSION": "detect",
+  "PATH_TO_WORKFLOW_JSON": null,
+  "WORKFLOW_NODE_IDS": null,
+  "VOICE_MAPPING": null,
+  "MAX_RENDER_HOURS": 3,
+  "CHUNK_TIMEOUT_MIN": 10,
+  "OUTPUT_FOLDER": "C:\\Users\\alfre\\Desktop\\_desktop\\_projects\\_ComfyUI\\output\\podcast_foundry",
+  "PATH_OR_NONE_MUSIC": null,
+  "DEFAULT_RECIPIENTS": ["alfredoalea@gmail.com", "alfredo.cursor@gmail.com", "alfredoaleawork@gmail.com"],
+  "SENDER_ADDRESS": null,
+  "EMAIL_METHOD": null,
+  "MAX_ATTACHMENT_MB": 20,
+  "SHARE_LOCATION": "C:\\Users\\alfre\\Desktop\\_desktop\\_projects\\_podcast_application\\_output_podcast_folder",
+  "MONTHLY_BUDGET": 0,
+  "PILOT_TOPIC": "How medical institutions are using hidden measures to create eugenics treatments for rich clients through proxy nation states",
+  "TTS_MODEL": "chatterbox"
+}

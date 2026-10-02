@@ -1,0 +1,15 @@
+# Secrets / local env — never committed
+.env
+.env.local
+*.local.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Runtime state
+data/*.db
+data/*.db-journal
