@@ -52,6 +52,13 @@ ComfyUI render pipeline, and M4's ffmpeg mastering/export + QA).
    over 3s, and speaker-voice match, writes a QA report (and show notes on
    pass), and offers "Re-render only the chunks QA flagged" on a per-chunk
    failure. The mastered files are downloadable from the episode page.
+9. Delivery is paused today (Board decision, POD-7): on a QA pass the email
+   MP3 is copied into `SHARE_LOCATION` and the episode shows a "collect your
+   episode here" notice with the exact path. The **Resend email** button is
+   visible but disabled with the pause reason. No email is sent until the
+   Board reopens POD-7 and sets `EMAIL_METHOD` + `SMTP_USER`/`SMTP_PASS` in
+   the environment — at which point the same button activates a real send
+   with no code change.
 
 No Node/npm, no database server, no other runtime dependency for this
 milestone.
@@ -97,13 +104,20 @@ mail today.
 ## Verification status (be honest about what has and hasn't run)
 
 - **Verified in this repo, WSL2-side (`/mnt/c` mount of this same folder):**
-  `python -m pytest tests/ -q`. M1+M2+M3 suites plus the new M4 suite — 41
-  tests collected. The M4 tests (`tests/test_postprod_qa.py`) cover
-  concatenation with [PAUSE] silence, speed, two-pass -16 LUFS loudnorm,
-  WAV/MP3 export with ID3 tags, per-chunk clipping, silence-gap detection,
-  speaker-voice matching, and re-queue of only the failing chunks, with
-  ComfyUI itself monkeypatched and **real ffmpeg** (each fake chunk writes a
-  real tone file) — "explicitly-stubbed render, real ffmpeg."
+  `python -m pytest tests/ -q` — 45 tests pass across the M1…M5 suites. The
+  M4 tests (`tests/test_postprod_qa.py`) cover concatenation with [PAUSE]
+  silence, speed, two-pass -16 LUFS loudnorm, WAV/MP3 export with ID3 tags,
+  per-chunk clipping, silence-gap detection, speaker-voice matching, and
+  re-queue of only the failing chunks, with ComfyUI itself monkeypatched and
+  **real ffmpeg** (each fake chunk writes a real tone file) —
+  "explicitly-stubbed render, real ffmpeg." The M5 tests
+  (`tests/test_delivery.py`) cover the paused handoff (QA pass →
+  `delivery_records` row `paused` → email MP3 copied into `SHARE_LOCATION` →
+  status `delivered_paused`), that `resend()` in the paused state sends
+  nothing, that an activated `EMAIL_METHOD` with missing SMTP credentials
+  fails loud naming the env names (never a fake success), that resend
+  refuses a double-send after a `sent` record, and that a recipient outside
+  the allowed set is refused. No real SMTP send happens anywhere in the suite.
 - **Verified against the Board's real, live ComfyUI** (not just
   monkeypatched, via the WSL↔Windows relay documented on POD-3): walked a
   real episode from intake through a real two-chunk, two-voice render to
