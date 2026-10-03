@@ -26,6 +26,13 @@ on it, rather than faking a check that never happened.
 On failure, only the chunks that actually failed a per-chunk check (clipping
 or voice mismatch) are queued for re-render via
 render.requeue_chunks_for_rerender — never the whole episode.
+
+On pass (M5, POD-12), QA hands the episode to delivery.run_delivery_on_qa_pass,
+which — in today's paused state — records `status='paused'`, copies the final
+email MP3 to SHARE_LOCATION, and surfaces the "collect your episode here"
+notice. That path is config-gated, never a code change, so the same QA pass
+activates a real send the moment EMAIL_METHOD is set (POD-7). QA never emails
+directly: the delivery module owns that boundary end to end.
 """
 from __future__ import annotations
 
@@ -33,7 +40,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
-from . import postprod, render
+from . import delivery, postprod, render
 from .config import config
 from .db import get_connection
 
@@ -281,6 +288,13 @@ def run_qa(episode_id: int) -> dict[str, Any]:
 
     failing_chunk_ids = sorted(set(clipped_chunk_ids) | set(mismatched_chunk_ids))
 
+    delivery_result = None
+    if overall_pass:
+        # M5 (POD-12): QA never emails directly — it hands to the delivery
+        # boundary, which records 'paused' + shares the MP3 today and would
+        # send the moment EMAIL_METHOD is set.
+        delivery_result = delivery.run_delivery_on_qa_pass(episode_id)
+
     return {
         "episode_id": episode_id,
         "job_id": job_id,
@@ -291,6 +305,7 @@ def run_qa(episode_id: int) -> dict[str, Any]:
         "voice_ok": voice_ok,
         "failing_chunk_ids": failing_chunk_ids,
         "duration_seconds": duration_seconds,
+        "delivery": delivery_result,
     }
 
 

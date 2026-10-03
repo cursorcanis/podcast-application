@@ -33,6 +33,14 @@ floor, per-chunk clipping, silence gaps over 3s, speaker-voice match) with a
 QA report + show notes written as episode documents, and re-render of only
 the chunks QA flagged. No email send (M5+).
 
+M5 scope (POD-12): delivery and the share handoff (app/delivery.py,
+app/routes_delivery.py) — on QA pass the app records a `delivery_records` row
+with `status='paused'` (EMAIL_METHOD unset today), copies the email MP3 to
+SHARE_LOCATION, and surfaces a "collect your episode here" notice; the Resend
+button stays visible but disabled with the pause reason, wired to the same
+delivery boundary so a future EMAIL_METHOD decision activates it with no code
+change. Delivery is idempotent and logged — never automatic, never a double-send.
+
 Run:  uvicorn app:app --reload        (or start_app.bat / run.bat on Windows)
 """
 from __future__ import annotations
@@ -47,15 +55,17 @@ from fastapi.staticfiles import StaticFiles
 
 from . import comfyui, db, render
 from .config import config
+from .routes_delivery import router as delivery_router
 from .routes_episodes import router as episodes_router
 from .routes_postprod import router as postprod_router
 from .routes_render import router as render_router
 from .web import templates
 
-app = FastAPI(title="Podcast Foundry", version="0.4.0-m4")
+app = FastAPI(title="Podcast Foundry", version="0.5.0-m5")
 app.include_router(episodes_router)
 app.include_router(render_router)
 app.include_router(postprod_router)
+app.include_router(delivery_router)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")

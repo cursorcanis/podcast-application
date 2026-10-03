@@ -11,6 +11,13 @@ voice matching, requeue-only-the-failing-chunks) runs for real against
 on-disk SQLite + real ffmpeg, never mocked — this is the "explicitly-stubbed
 render, real ffmpeg" verification named in the Done bar: ComfyUI itself is
 stubbed (unreachable from this WSL session), ffmpeg mastering/QA is not.
+
+M5 (POD-12) change to the on-pass path: a QA pass now hands the episode to
+app/delivery.run_delivery_on_qa_pass, which — while EMAIL_METHOD is unset —
+records a `paused` delivery row and copies the email MP3 to SHARE_LOCATION,
+moving the episode from `ready` to `delivered_paused`. The pass-time
+assertions below reflect that; the QA-fail paths are unchanged (no delivery
+fire on a failure). Delivery-specific tests live in tests/test_delivery.py.
 """
 from __future__ import annotations
 
@@ -23,7 +30,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app as app_module
-from app import comfyui, db, episodes, postprod, qa, render, workflow
+from app import comfyui, db, delivery, episodes, postprod, qa, render, workflow
 from app.config import config
 
 
@@ -50,6 +57,13 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(render, "get_connection", fake_get_connection)
     monkeypatch.setattr(postprod, "get_connection", fake_get_connection)
     monkeypatch.setattr(qa, "get_connection", fake_get_connection)
+    # M5: qa.run_qa hands off to delivery on pass — delivery needs the same
+    # test DB connection, and its SHARE_LOCATION must point at a tmp dir so
+    # the paused-handoff copy doesn't touch the Board's real Windows folder.
+    monkeypatch.setattr(delivery, "get_connection", fake_get_connection)
+    monkeypatch.setitem(config.values, "SHARE_LOCATION", str(tmp_path / "share"))
+    (tmp_path / "share").mkdir(parents=True, exist_ok=True)
+    monkeypatch.setitem(config.values, "EMAIL_METHOD", None)
     db.init_db(db_path)
     monkeypatch.setattr(render, "_start_thread", lambda job_id: None)
     monkeypatch.setitem(config.values, "OUTPUT_FOLDER", str(tmp_path / "comfy_output"))
@@ -137,7 +151,7 @@ def _render_two_chunk_episode(client, monkeypatch, *, seconds_per_chunk=35.0, cl
     return episode_id
 
 
-def test_postprod_and_qa_pass_produce_master_and_show_notes(client, monkeypatch):
+def test_postprod_and_qa_pass_produce_master_show_notes_and_handoff(client, monkeypatch):
     # 5-minute floor (episodes.MIN_LENGTH_MINUTES) -> need >= 300s of real
     # audio for the duration-floor QA check to pass honestly.
     episode_id = _render_two_chunk_episode(client, monkeypatch, seconds_per_chunk=155.0, length_minutes_target=5)
@@ -156,13 +170,22 @@ def test_postprod_and_qa_pass_produce_master_and_show_notes(client, monkeypatch)
     result = qa.run_qa(episode_id)
     assert result["overall_pass"] is True
     episode = episodes.get_episode(episode_id)
-    assert episode["status"] == "ready"
+    # M5: a QA pass now hands off to delivery (paused -> delivered_paused),
+    # not a bare 'ready'.
+    assert episode["status"] == "delivered_paused"
     assert episode["qa_status"] == "pass"
 
     docs = episodes.latest_episode_documents(episode_id)
     assert docs["qa_report"] is not None and "PASS" in docs["qa_report"]["body"]
     assert docs["show_notes"] is not None
     assert "Source A" in docs["show_notes"]["body"]
+
+    # The delivery handoff fired: a paused record + the MP3 in SHARE_LOCATION.
+    assert result["delivery"] is not None
+    assert result["delivery"]["status"] == "paused"
+    assert result["delivery"]["sent"] is False
+    copied = list(pathlib.Path(config.share_location).glob("*_email_96k.mp3"))
+    assert copied, "no email MP3 copied into SHARE_LOCATION"
 
 
 def test_qa_fails_on_duration_floor_without_blocking_download(client, monkeypatch):
@@ -175,11 +198,14 @@ def test_qa_fails_on_duration_floor_without_blocking_download(client, monkeypatc
     episode = episodes.get_episode(episode_id)
     assert episode["status"] == "qa_failed"
     assert episode["qa_status"] == "fail"
-    # Mastered files still exist / are downloadable even though QA failed —
+    # Mastered files still exist / be downloadable even though QA failed —
     # QA gates the episode's status, not the file's existence.
     assert pathlib.Path(episode["wav_master_path"]).exists()
     docs = episodes.latest_episode_documents(episode_id)
     assert docs["show_notes"] is None  # never written on a QA failure
+    # No delivery fired on a QA failure.
+    assert result["delivery"] is None
+    assert delivery.latest_delivery_record(episode_id) is None
 
 
 def test_qa_detects_clipping_and_requeues_only_that_chunk(client, monkeypatch):
@@ -218,3 +244,14 @@ def test_requeue_rejects_unknown_chunk_ids(client, monkeypatch):
     job = render.get_latest_job_for_episode(episode_id)
     with pytest.raises(render.RenderError):
         render.requeue_chunks_for_rerender(job["id"], [999999])
+
+
+def test_qa_fails_on_clipping_never_fires_delivery(client, monkeypatch):
+    episode_id = _render_two_chunk_episode(
+        client, monkeypatch, seconds_per_chunk=35.0, clip_chunk2=True, length_minutes_target=5
+    )
+    postprod.run_postproduction(episode_id)
+    result = qa.run_qa(episode_id)
+    assert result["overall_pass"] is False
+    assert result["delivery"] is None
+    assert delivery.latest_delivery_record(episode_id) is None

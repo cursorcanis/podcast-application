@@ -5,6 +5,10 @@
 <h2>{{ episode.title }}</h2>
 <p><span class="status-pill status-{{ episode.status }}">{{ episode.status }}</span></p>
 
+{% if error %}
+<div class="banner fail">{{ error }}</div>
+{% endif %}
+
 <div class="card">
   <h3>Settings</h3>
   <ul>
@@ -82,7 +86,7 @@
 </div>
 {% endif %}
 
-{% if episode.status in ('rendered', 'postproduction', 'qa', 'qa_failed', 'ready', 'delivered_paused') %}
+{% if episode.status in ('rendered', 'postproduction', 'qa', 'qa_failed', 'ready', 'delivered_paused', 'delivered') %}
 <div class="card">
   <h3>Post-production (ffmpeg mastering + export)</h3>
   {% if episode.status == 'rendered' %}
@@ -110,7 +114,7 @@
   {% endif %}
 </div>
 
-{% if episode.status in ('postproduction', 'qa', 'qa_failed', 'ready', 'delivered_paused') %}
+{% if episode.status in ('postproduction', 'qa', 'qa_failed', 'ready', 'delivered_paused', 'delivered') %}
 <div class="card">
   <h3>QA</h3>
   <p><span class="status-pill status-{{ episode.qa_status or 'pending' }}">
@@ -138,11 +142,44 @@
 </div>
 {% endif %}
 
-{% if episode.status == 'ready' %}
-<div class="banner ok">
-  Status: ready. QA passed. Email delivery is a later milestone (M5) — not yet built.
-</div>
 {% endif %}
+
+{# Delivery card (M5): shown once QA has passed (or a delivery record exists),
+   so the Board sees the share handoff / resend state exactly as it stands. #}
+{% if episode.status in ('delivered_paused', 'delivered') or delivery.record %}
+<div class="card">
+  <h3>Delivery</h3>
+  {% if delivery.paused %}
+    <p><span class="status-pill checking">PAUSED</span></p>
+    <p class="meta">{{ delivery.reason }}</p>
+    {% if delivery.record and delivery.record.status == 'paused' %}
+    <div class="banner ok">
+      Collect your episode here:<br>
+      <code>{{ delivery.share_location }}</code>
+    </div>
+    <p class="meta">The final email MP3 was copied to that folder at
+       {{ delivery.record.attempted_at }}. Email is not sent while delivery is paused.</p>
+    {% endif %}
+    <form method="post" action="/episodes/{{ episode.id }}/delivery/resend"
+          onsubmit="return false;">
+      <button type="submit" disabled title="{{ delivery.reason }}">Resend email</button>
+    </form>
+    <p class="meta">Resend is disabled: {{ delivery.reason }}</p>
+  {% else %}
+    {% if delivery.record and delivery.record.status == 'sent' %}
+    <p><span class="status-pill ok">SENT</span> at {{ delivery.record.attempted_at }}
+       (provider id {{ delivery.record.provider_message_id }}) to
+       {{ delivery.record.recipients_sent_to | join(", ") }}</p>
+    <p class="meta">Resend is disabled after a successful send to avoid a double-send.</p>
+    <button disabled>Resend email</button>
+    {% else %}
+    <p class="meta">Delivery is active (EMAIL_METHOD set).</p>
+    <form method="post" action="/episodes/{{ episode.id }}/delivery/resend">
+      <button type="submit">Resend email</button>
+    </form>
+    {% endif %}
+  {% endif %}
+</div>
 {% endif %}
 
 {% endblock %}

@@ -6,7 +6,7 @@ script review, ComfyUI voice rendering, ffmpeg mastering, QA, and delivery.
 This repo is being built milestone by milestone; see the table below for what
 works today.
 
-## Current status — M4 (ffmpeg mastering, export, QA)
+## Current status — M5 (delivery-paused handling + share handoff)
 
 - FastAPI + SQLite app skeleton (M1).
 - **Status / Settings** screen at `http://127.0.0.1:8000` with the live
@@ -73,8 +73,21 @@ works today.
   map, render progress, mastered files with **Download** buttons (WAV
   master / archive MP3 / email MP3), the QA report, and show notes.
 
-Not yet: email delivery (M5+), voice-profile picker, tone/cadence presets,
-saved recipient-list management. Those arrive in later milestones.
+- **Delivery** (`app/delivery.py`, `app/routes_delivery.py`) — the email stage is
+  **paused** today: `EMAIL_METHOD` is unset (Board's POD-7 decision), so
+  nothing sends. On a QA pass the app instead writes a `delivery_records`
+  row with `status='paused'`, copies the email MP3 into `SHARE_LOCATION`,
+  and shows a "collect your episode here" notice with the exact path. The
+  **Resend email** button stays visible but is disabled with the pause
+  reason, wired to the same delivery boundary as actual send, so a future
+  `EMAIL_METHOD=smtp` + `SMTP_USER`/`SMTP_PASS` decision activates a real
+  send with **no code change**. Delivery is idempotent and logged — never
+  automatic, never a double-send, and never to a recipient outside the
+  episode's recorded (already validated) list. No credential is stored,
+  logged, or displayed; SMTP env names are read from the environment only.
+
+Not yet: an actual email send (paused until POD-7), voice-profile picker,
+tone/cadence presets, saved recipient-list management. Those arrive in later milestones.
 
 ## Prerequisites (Windows)
 
@@ -163,6 +176,16 @@ render, real ffmpeg". It also asserts a QA failure on the duration floor
 leaves the mastered files downloadable (QA gates the episode status, not the
 file's existence) and never writes show notes on a failure.
 
+`tests/test_delivery.py` is the M5 delivery suite: it proves the paused
+handoff for real (QA pass -> `delivery_records` row `paused` -> email MP3
+copied into `SHARE_LOCATION` -> status `delivered_paused`), that `resend()`
+in the paused state sends nothing, that an activated `EMAIL_METHOD` with
+missing SMTP credentials fails loud naming the env names (never a real send
+or a fake success), that resend refuses a double-send after a `sent` record,
+and that a recipient outside the allowed set is refused. No real SMTP send
+happens anywhere in the suite (none may, until POD-7 resolves).
+
+
 **Also verified against the Board's real, live ComfyUI** (not just
 monkeypatched): a two-chunk two-host episode rendered end to end through the
 actual app routes, producing real FLAC audio files on disk (confirmed with
@@ -211,6 +234,9 @@ app/episodes.py        M2 domain logic: intake, source gate, script review
 app/routes_episodes.py M2 routes: /episodes, /episodes/{id}/sources, /episodes/{id}/script
 app/routes_render.py   M3 routes: /episodes/{id}/render, start/confirm/cancel, status API
 app/routes_postprod.py M4 routes: postprod run, QA run/retry, download WAV/MP3
+app/delivery.py       M5 delivery: paused handoff to SHARE_LOCATION + smtp send behind
+                      EMAIL_METHOD; idempotent, logged, never a double-send
+app/routes_delivery.py M5 route: POST /episodes/{id}/delivery/resend (explicit, guarded)
 app/web.py             shared Jinja2Templates instance
 config/app_config.json       the Board-confirmed values (no credentials)
 config/comfyui_workflow.json the measured, working ComfyUI workflow (POD-3) — swap freely;
@@ -226,6 +252,7 @@ tests/test_render.py   M3 integration tests (render_jobs/render_chunks pipeline,
                        crash/resume), ComfyUI itself monkeypatched
 tests/test_postprod_qa.py M4 integration tests (mastering/export + QA), ComfyUI stub,
                        real ffmpeg (real tone files on disk)
+tests/test_delivery.py M5 delivery tests (paused handoff + activate-with-no-code-change)
 start_app.bat          Windows launcher
 .env.example           env var NAMES only
 app.py / config.py / db.py   superseded fail-loud stubs at repo root (see below)

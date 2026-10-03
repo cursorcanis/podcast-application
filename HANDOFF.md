@@ -10,10 +10,10 @@ up after a break). It is required by the Board's configuration decision
 A local web app that drives the Podcast Foundry episode pipeline end to end:
 episode intake, the Board's source-approval gate, script review, ComfyUI voice
 rendering, ffmpeg mastering, QA, and delivery — see `README.md` for the
-feature-by-feature status (currently **M4** — ffmpeg mastering/export + QA,
-on top of M1's Status/Settings screen, M2's episode intake / Board
-source-approval gate / hand-entered script review, and M3's ComfyUI render
-pipeline).
+feature-by-feature status (currently **M5** — delivery-paused handling and the
+share-folder handoff, on top of M1's Status/Settings screen, M2's episode
+intake / Board source-approval gate / hand-entered script review, M3's
+ComfyUI render pipeline, and M4's ffmpeg mastering/export + QA).
 
 ## Clone → running, on a clean Windows machine
 

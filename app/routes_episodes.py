@@ -14,7 +14,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from . import episodes
+from . import delivery, episodes
 from .config import config
 from .web import templates
 
@@ -109,6 +109,7 @@ def episode_detail(request: Request, episode_id: int):
             "sources": sources,
             "gate": episodes.gate_status(episode_id, sources),
             "docs": docs,
+            "delivery": delivery.delivery_view(episode_id),
         },
     )
 
