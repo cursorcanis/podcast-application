@@ -6,7 +6,7 @@ script review, ComfyUI voice rendering, ffmpeg mastering, QA, and delivery.
 This repo is being built milestone by milestone; see the table below for what
 works today.
 
-## Current status — M3 (ComfyUI render pipeline)
+## Current status — M4 (ffmpeg mastering, export, QA)
 
 - FastAPI + SQLite app skeleton (M1).
 - **Status / Settings** screen at `http://127.0.0.1:8000` with the live
@@ -45,19 +45,47 @@ works today.
   enforced in `app/render.py`. Progress is measured, not guessed: the
   progress screen shows real elapsed time and, once at least one chunk has
   rendered, a projection based on this job's own measured chunk times.
-- **Episode Library** (`/episodes`) — every episode, filterable by status,
-  with a detail view (settings, source-gate state, script/citation map,
-  render progress link).
+- **Post-production / mastering + export** (`app/postprod.py`,
+  `app/routes_postprod.py`) — once a render job has fully succeeded, the app
+  concatenates the rendered chunks with real `[PAUSE]` silence inserted
+  (a gap between two chunks is the sum of the left chunk's `pause_after`
+  and the right chunk's `pause_before` — additive, not double-counted),
+  applies the episode's configured speed via `atempo`, normalizes to
+  **-16 LUFS** with ffmpeg's two-pass `loudnorm` (measure then apply — the
+  accurate path, not single-pass), and exports three files to
+  `OUTPUT_FOLDER/<date>_<slug>/`: a WAV master, a **192 kbps stereo archive
+  MP3**, and a **96 kbps mono 44.1 kHz email MP3** with ID3 tags written by
+  ffmpeg. Every ffmpeg/ffprobe step is its own subprocess so a failure names
+  the exact command and stderr tail — never "something went wrong".
+- **QA** (`app/qa.py`) — after mastering, the app checks what it can honestly
+  check without a funded ASR path: the duration floor (master at/above the
+  requested length), per-chunk clipping (ffmpeg `astats` on each chunk's own
+  rendered audio, so the exact chunk is pinned), silence gaps over 3s
+  (ffmpeg `silencedetect` on the final master — a `[PAUSE]` tag asking for
+  >3s fails the same as a TTS glitch, honestly), and speaker-voice match
+  (each chunk's recorded `voice_reference_used` vs. the current
+  `VOICE_MAPPING`). It writes a **QA report** and (on pass) **show notes** as
+  episode documents, and re-renders *only* the chunks it flagged — never the
+  whole episode. Mispronunciation has no automatable proxy here; the report
+  says so explicitly and does not gate pass/fail on it.
+- **Episode library** (`/episodes`) — every episode, filterable by status,
+  with a detail view that shows settings, source-gate state, script/citation
+  map, render progress, mastered files with **Download** buttons (WAV
+  master / archive MP3 / email MP3), the QA report, and show notes.
 
-Not yet: ffmpeg mastering/export, QA, email, voice-profile picker, presets,
-saved recipient-list management. Those are M4+.
+Not yet: email delivery (M5+), voice-profile picker, tone/cadence presets,
+saved recipient-list management. Those arrive in later milestones.
 
 ## Prerequisites (Windows)
 
 1. **Python 3.11+** on PATH (the Board already has Python to run ComfyUI).
-2. **ComfyUI** running (for a green status). If it is not running, the status
-   screen honestly shows **UNREACHABLE** with the fallback steps.
-3. No other runtime: no Node, no npm, no database server.
+2. **ComfyUI** running (for a green status and for any render). If it is not
+   running, the status screen honestly shows **UNREACHABLE** with the
+   fallback steps.
+3. **ffmpeg + ffprobe** on PATH (required for mastering/export and QA — the
+   Board's machine has ffmpeg 8.0.1). If missing, the mastering step fails
+   loud naming `ffmpeg`/`ffprobe` and the README's setup step.
+4. No other runtime: no Node, no npm, no database server.
 
 ## Run it
 
@@ -76,7 +104,7 @@ Then open <http://127.0.0.1:8000>.
 ## Configuration (env vars — names only, values never in the repo)
 
 All settings read from process environment variables first, falling back to
-Board-confirmed defaults in `app/config.py`. On Windows set them via
+Board-confirmed defaults in `config/app_config.json`. On Windows set them via
 **System Properties → Environment Variables**, or copy `.env.example` to a
 local `.env` (gitignored) and fill values there — never commit a value.
 
@@ -124,6 +152,17 @@ MAX_RENDER_HOURS confirm-before-submit gate, and, by raising mid-chunk to
 simulate a crash and then re-running the worker loop, that resuming never
 re-renders an already-succeeded chunk and never duplicates chunk rows.
 
+`tests/test_postprod_qa.py` is the M4 integration suite: ComfyUI is
+monkeypatched exactly as in `test_render.py`, but each fake chunk writes a
+**real tone WAV** on disk via real ffmpeg, so everything downstream of the
+stubbed render (concatenation, [PAUSE] silence, speed, two-pass loudnorm,
+WAV/MP3 export with ID3 tags, per-chunk clip detection, silence-gap
+detection, speaker-voice matching, and re-queue of only the failing chunks)
+runs for real against on-disk SQLite + real ffmpeg — "explicitly-stubbed
+render, real ffmpeg". It also asserts a QA failure on the duration floor
+leaves the mastered files downloadable (QA gates the episode status, not the
+file's existence) and never writes show notes on a failure.
+
 **Also verified against the Board's real, live ComfyUI** (not just
 monkeypatched): a two-chunk two-host episode rendered end to end through the
 actual app routes, producing real FLAC audio files on disk (confirmed with
@@ -133,8 +172,8 @@ after chunk 1 succeeded and while chunk 2 was mid-flight, then the process
 was restarted: chunk 1 resumed with its *original* ComfyUI prompt_id
 (proving it was not re-submitted), chunk 2 got a *new* prompt_id (proving
 the in-flight chunk — and only that chunk — was re-rendered), and chunk 3
-rendered normally afterward to a succeeded job. This is the milestone's
-demoable outcome, run for real, not simulated.
+rendered normally afterward to a succeeded job. This is the M3 demoable
+outcome, run for real, not simulated.
 
 ## Development notes
 
@@ -146,7 +185,6 @@ demoable outcome, run for real, not simulated.
   address for that session only, via an env var override — never committed).
   Windows-native behavior is verified only when actually run there (plan Risk
   R7), and this README says so rather than claiming it.
-- `ffmpeg` is not used until M4 (mastering/export). Nothing here needs it yet.
 - The render worker runs in a background thread inside the same FastAPI
   process (one worker, one job — the GPU is the bottleneck, so there is no
   separate task queue to run or configure). It is **not** restarted by a
@@ -165,9 +203,14 @@ app/workflow.py        dynamic ComfyUI node discovery from the workflow JSON (M3
 app/chunking.py        script -> per-speaker-turn chunk plan (M3)
 app/render.py          render_jobs/render_chunks orchestration, cap gate, OOM backoff,
                        crash/reboot resumability (M3)
+app/postprod.py        ffmpeg mastering + export: concat with [PAUSE] silence, speed,
+                       two-pass -16 LUFS loudnorm, WAV + 2 MP3 exports with ID3 tags (M4)
+app/qa.py              QA checks (duration floor, per-chunk clipping, silence gaps,
+                       speaker-voice match), QA report + show notes, chunk re-queue (M4)
 app/episodes.py        M2 domain logic: intake, source gate, script review
 app/routes_episodes.py M2 routes: /episodes, /episodes/{id}/sources, /episodes/{id}/script
 app/routes_render.py   M3 routes: /episodes/{id}/render, start/confirm/cancel, status API
+app/routes_postprod.py M4 routes: postprod run, QA run/retry, download WAV/MP3
 app/web.py             shared Jinja2Templates instance
 config/app_config.json       the Board-confirmed values (no credentials)
 config/comfyui_workflow.json the measured, working ComfyUI workflow (POD-3) — swap freely;
@@ -181,6 +224,8 @@ tests/test_chunking.py M3 unit tests for script chunking
 tests/test_workflow.py M3 unit tests for dynamic ComfyUI node discovery
 tests/test_render.py   M3 integration tests (render_jobs/render_chunks pipeline, cap gate,
                        crash/resume), ComfyUI itself monkeypatched
+tests/test_postprod_qa.py M4 integration tests (mastering/export + QA), ComfyUI stub,
+                       real ffmpeg (real tone files on disk)
 start_app.bat          Windows launcher
 .env.example           env var NAMES only
 app.py / config.py / db.py   superseded fail-loud stubs at repo root (see below)

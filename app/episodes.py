@@ -395,7 +395,7 @@ def close_source_gate(episode_id: int) -> None:
 
 # --- Script review -------------------------------------------------------------
 
-DOCUMENT_KINDS = ("outline", "script", "citation_map")
+DOCUMENT_KINDS = ("outline", "script", "citation_map", "qa_report", "show_notes")
 
 
 def latest_episode_documents(episode_id: int) -> dict[str, dict | None]:

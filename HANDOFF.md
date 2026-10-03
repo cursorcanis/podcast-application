@@ -10,40 +10,51 @@ up after a break). It is required by the Board's configuration decision
 A local web app that drives the Podcast Foundry episode pipeline end to end:
 episode intake, the Board's source-approval gate, script review, ComfyUI voice
 rendering, ffmpeg mastering, QA, and delivery — see `README.md` for the
-feature-by-feature status (currently **M3** — the ComfyUI render pipeline,
-on top of M1's Status/Settings screen and M2's episode intake / Board
-source-approval gate / hand-entered script review).
+feature-by-feature status (currently **M4** — ffmpeg mastering/export + QA,
+on top of M1's Status/Settings screen, M2's episode intake / Board
+source-approval gate / hand-entered script review, and M3's ComfyUI render
+pipeline).
 
 ## Clone → running, on a clean Windows machine
 
 1. Install **Python 3.11+** (the Board's machine already has this to run
    ComfyUI) and make sure `python` is on `PATH`.
-2. `git clone https://github.com/cursorcanis/podcast-application.git`
-3. Double-click `start_app.bat` inside the clone. First run creates `.venv`
+2. Install **ffmpeg + ffprobe** and put them on `PATH` (the Board's machine
+   has ffmpeg 8.0.1) — required for M4 mastering/export and QA.
+3. `git clone https://github.com/cursorcanis/podcast-application.git`
+4. Double-click `start_app.bat` inside the clone. First run creates `.venv`
    and installs `requirements.txt`; every run after that just starts the
    server.
-4. Open <http://127.0.0.1:8000>. You should see the Status/Settings screen.
+5. Open <http://127.0.0.1:8000>. You should see the Status/Settings screen.
    If **ComfyUI** (the TTS render server) is not already running at
    `COMFYUI_URL` (default `http://127.0.0.1:8188`), the screen honestly shows
    a red **UNREACHABLE** state with the exact error and a fallback checklist —
    that is expected, not a bug, until ComfyUI is started.
-5. Click **New Episode** in the nav, submit the intake form, and you land on
+6. Click **New Episode** in the nav, submit the intake form, and you land on
    **Source Review** (the Board gate) for that episode. Add a source,
    Approve or Remove it, then "Approve sources & close gate" once every
    source has a decision and at least one is approved. That unlocks
    **Script Review**, where you paste outline/script/citation-map text and
    click "Mark script ready." The episode now shows `script_ready` in the
    **Episode Library**.
-6. From the episode page, click **Start render**. If the projected render
+7. From the episode page, click **Start render**. If the projected render
    time is within `MAX_RENDER_HOURS` it starts immediately; if not, you get
    an explicit confirm screen and nothing is submitted to ComfyUI until you
    confirm. The render page polls real progress (measured elapsed time and,
    once a chunk has finished, a projection based on this job's own measured
    times — never a spinner or a fake percentage). The episode moves to
    `rendered` once every chunk succeeds.
+8. On the episode page, click **Run mastering & export**. The app concatenates
+   the rendered chunks with real `[PAUSE]` silence, applies speed, normalizes
+   to -16 LUFS, and exports the WAV master + 192kbps archive MP3 + 96kbps
+   email MP3 (with ID3 tags) to `OUTPUT_FOLDER/<date>_<slug>/`. Then click
+   **Run QA**, which checks duration floor, per-chunk clipping, silence gaps
+   over 3s, and speaker-voice match, writes a QA report (and show notes on
+   pass), and offers "Re-render only the chunks QA flagged" on a per-chunk
+   failure. The mastered files are downloadable from the episode page.
 
 No Node/npm, no database server, no other runtime dependency for this
-milestone. `ffmpeg` is required starting at M4 (mastering/export), not before.
+milestone.
 
 ## ComfyUI prerequisites for a render (M3)
 
@@ -86,11 +97,13 @@ mail today.
 ## Verification status (be honest about what has and hasn't run)
 
 - **Verified in this repo, WSL2-side (`/mnt/c` mount of this same folder):**
-  `python -m pytest tests/ -q` (33/33 passing: 9 M1 + 6 M2 + 18 M3). The M3
-  tests cover script chunking, dynamic ComfyUI node discovery against both
-  the real repo workflow file and hand-built alternates (a differently
-  packaged Chatterbox node, an ambiguous/missing-node workflow), and the
-  full render_jobs/render_chunks pipeline with ComfyUI itself monkeypatched.
+  `python -m pytest tests/ -q`. M1+M2+M3 suites plus the new M4 suite — 41
+  tests collected. The M4 tests (`tests/test_postprod_qa.py`) cover
+  concatenation with [PAUSE] silence, speed, two-pass -16 LUFS loudnorm,
+  WAV/MP3 export with ID3 tags, per-chunk clipping, silence-gap detection,
+  speaker-voice matching, and re-queue of only the failing chunks, with
+  ComfyUI itself monkeypatched and **real ffmpeg** (each fake chunk writes a
+  real tone file) — "explicitly-stubbed render, real ffmpeg."
 - **Verified against the Board's real, live ComfyUI** (not just
   monkeypatched, via the WSL↔Windows relay documented on POD-3): walked a
   real episode from intake through a real two-chunk, two-voice render to

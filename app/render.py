@@ -145,10 +145,14 @@ def _insert_chunks(conn: sqlite3.Connection, job_id: int, chunks: list[chunking.
         conn.execute(
             """
             INSERT INTO render_chunks (
-                job_id, chunk_index, speaker, text, status, chunk_seconds_target
-            ) VALUES (?, ?, ?, ?, 'pending', ?)
+                job_id, chunk_index, speaker, text, status, chunk_seconds_target,
+                pause_before_seconds, pause_after_seconds
+            ) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)
             """,
-            (job_id, idx, chunk.speaker, chunk.text, chunk.estimated_seconds),
+            (
+                job_id, idx, chunk.speaker, chunk.text, chunk.estimated_seconds,
+                chunk.pause_before_seconds, chunk.pause_after_seconds,
+            ),
         )
 
 
@@ -279,6 +283,92 @@ def cancel_render_job(job_id: int) -> None:
         conn.commit()
     finally:
         conn.close()
+
+
+def list_succeeded_chunks_for_job(job_id: int) -> list[dict]:
+    """Every succeeded chunk for a job, in chunk_index order — the sequence
+    app/postprod.py concatenates. Raises if any chunk is not succeeded, since
+    mastering a partially-rendered job would silently produce a wrong-length
+    episode."""
+    conn = get_connection()
+    try:
+        job = conn.execute("SELECT * FROM render_jobs WHERE id = ?", (job_id,)).fetchone()
+        if job is None:
+            raise RenderError(f"Render job {job_id} does not exist.")
+        chunks = [dict(r) for r in conn.execute(
+            "SELECT * FROM render_chunks WHERE job_id = ? ORDER BY chunk_index ASC", (job_id,)
+        ).fetchall()]
+    finally:
+        conn.close()
+    not_succeeded = [c for c in chunks if c["status"] != "succeeded"]
+    if not_succeeded:
+        raise RenderError(
+            f"Render job {job_id} has {len(not_succeeded)} chunk(s) not yet succeeded "
+            f"(first: chunk {not_succeeded[0]['chunk_index']}, status "
+            f"'{not_succeeded[0]['status']}') — mastering requires every chunk to have "
+            "rendered first."
+        )
+    return chunks
+
+
+def requeue_chunks_for_rerender(job_id: int, chunk_ids: list[int]) -> None:
+    """QA found that specific chunks' own rendered audio failed a check (e.g.
+    clipping) — reset exactly those chunk rows to 'pending' and resume this
+    SAME job/thread, reusing M3's resumability mechanism so only the failing
+    chunks re-render, never the whole episode."""
+    if not chunk_ids:
+        raise RenderError("requeue_chunks_for_rerender called with no chunk ids.")
+    conn = get_connection()
+    try:
+        job = conn.execute("SELECT * FROM render_jobs WHERE id = ?", (job_id,)).fetchone()
+        if job is None:
+            raise RenderError(f"Render job {job_id} does not exist.")
+        if job["status"] not in ("succeeded", "failed"):
+            raise RenderError(
+                f"Render job {job_id} is not finished (status is '{job['status']}') — "
+                "cannot requeue chunks for a job that is still active."
+            )
+        active = conn.execute(
+            "SELECT * FROM render_jobs WHERE status IN (?, ?) ORDER BY id DESC LIMIT 1",
+            _ACTIVE_JOB_STATUSES,
+        ).fetchone()
+        if active is not None:
+            raise AlreadyRenderingError(
+                f"Render job {active['id']} for episode {active['episode_id']} is already "
+                f"{active['status']} — only one render job may run system-wide at a time."
+            )
+        rows = conn.execute(
+            f"SELECT id FROM render_chunks WHERE job_id = ? AND id IN "
+            f"({','.join('?' for _ in chunk_ids)})",
+            (job_id, *chunk_ids),
+        ).fetchall()
+        found_ids = {int(r["id"]) for r in rows}
+        missing = set(chunk_ids) - found_ids
+        if missing:
+            raise RenderError(f"Chunk id(s) {sorted(missing)} do not belong to render job {job_id}.")
+        conn.execute(
+            f"UPDATE render_chunks SET status = 'pending', attempt_count = 0, error_detail = NULL, "
+            f"output_wav_path = NULL, measured_render_seconds = NULL, qa_clip_detected = 0, "
+            f"comfyui_prompt_id = NULL WHERE id IN ({','.join('?' for _ in chunk_ids)})",
+            tuple(chunk_ids),
+        )
+        conn.execute(
+            "UPDATE render_jobs SET status = 'running', finished_at = NULL, error_detail = NULL "
+            "WHERE id = ?",
+            (job_id,),
+        )
+        conn.execute(
+            "UPDATE episodes SET status = 'rendering', updated_at = ? WHERE id = ?",
+            (utcnow_iso(), job["episode_id"]),
+        )
+        conn.commit()
+    except sqlite3.IntegrityError as exc:
+        raise AlreadyRenderingError(
+            f"Another render job became active system-wide while requeueing: {exc}"
+        ) from exc
+    finally:
+        conn.close()
+    _start_thread(job_id)
 
 
 def resume_pending_jobs() -> list[int]:
@@ -418,8 +508,8 @@ def _run_job(job_id: int) -> None:
             started_at = utcnow_iso()
             conn.execute(
                 "UPDATE render_chunks SET status = 'submitted', attempt_count = attempt_count + 1, "
-                "started_at = ?, error_detail = NULL WHERE id = ?",
-                (started_at, chunk["id"]),
+                "started_at = ?, error_detail = NULL, voice_reference_used = ? WHERE id = ?",
+                (started_at, voice_ref, chunk["id"]),
             )
             conn.commit()
 
@@ -496,16 +586,22 @@ def _run_job(job_id: int) -> None:
                         "AND chunk_index > ?",
                         (len(pieces) - 1, job_id, chunk["chunk_index"]),
                     )
+                    # The original chunk's pause_before/after belonged to its
+                    # first/last piece respectively — the new middle pieces
+                    # introduced by this split carry no pause of their own.
                     for offset, piece in enumerate(pieces):
                         conn.execute(
                             "INSERT INTO render_chunks (job_id, chunk_index, speaker, text, status, "
-                            "chunk_seconds_target) VALUES (?, ?, ?, ?, 'pending', ?)",
+                            "chunk_seconds_target, pause_before_seconds, pause_after_seconds) "
+                            "VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)",
                             (
                                 job_id,
                                 chunk["chunk_index"] + offset,
                                 chunk["speaker"],
                                 piece,
                                 chunking.estimate_seconds(piece, speed),
+                                chunk["pause_before_seconds"] if offset == 0 else 0.0,
+                                chunk["pause_after_seconds"] if offset == len(pieces) - 1 else 0.0,
                             ),
                         )
                 conn.commit()

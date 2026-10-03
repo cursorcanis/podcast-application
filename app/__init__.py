@@ -23,8 +23,15 @@ app/workflow.py, app/chunking.py, app/routes_render.py) — serial chunked
 submission against the configured workflow JSON, crash/reboot-resumable
 render_jobs/render_chunks state, the one-job-system-wide constraint, the
 10-minute chunk timeout, OOM backoff by halving chunk size, and the
-MAX_RENDER_HOURS confirm-to-proceed gate. No ffmpeg mastering, no QA, no
-email (M4+).
+MAX_RENDER_HOURS confirm-to-proceed gate.
+
+M4 scope (POD-11): ffmpeg mastering + export and QA (app/postprod.py,
+app/qa.py, app/routes_postprod.py) — concatenate rendered chunks with real
+[PAUSE] silence, apply speed, normalize to -16 LUFS, export the WAV master +
+192kbps archive MP3 + 96kbps email MP3 with ID3 tags; automated QA (duration
+floor, per-chunk clipping, silence gaps over 3s, speaker-voice match) with a
+QA report + show notes written as episode documents, and re-render of only
+the chunks QA flagged. No email send (M5+).
 
 Run:  uvicorn app:app --reload        (or start_app.bat / run.bat on Windows)
 """
@@ -41,12 +48,14 @@ from fastapi.staticfiles import StaticFiles
 from . import comfyui, db, render
 from .config import config
 from .routes_episodes import router as episodes_router
+from .routes_postprod import router as postprod_router
 from .routes_render import router as render_router
 from .web import templates
 
-app = FastAPI(title="Podcast Foundry", version="0.3.0-m3")
+app = FastAPI(title="Podcast Foundry", version="0.4.0-m4")
 app.include_router(episodes_router)
 app.include_router(render_router)
+app.include_router(postprod_router)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")

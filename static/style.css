@@ -58,8 +58,8 @@ main { max-width: 960px; margin: 24px auto; padding: 0 16px; }
   font-size: 13px;
 }
 .status-pill.checking { background: #e2e8f0; color: #475569; }
-.status-pill.ok { background: #dff2e6; color: var(--ok); }
-.status-pill.bad { background: #fde7ec; color: var(--bad); }
+.status-pill.ok, .status-pill.status-pass { background: #dff2e6; color: var(--ok); }
+.status-pill.bad, .status-pill.status-fail { background: #fde7ec; color: var(--bad); }
 .detail {
   white-space: pre-wrap;
   font-size: 13px;

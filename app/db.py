@@ -38,6 +38,13 @@ CREATE TABLE IF NOT EXISTS episodes (
     recipient_emails TEXT NOT NULL DEFAULT '[]',
     status TEXT NOT NULL DEFAULT 'draft',
     defaults_applied TEXT NOT NULL DEFAULT '[]',
+    -- M4 (POD-11): postproduction output, set once mastering/export finishes.
+    output_dir TEXT,
+    wav_master_path TEXT,
+    archive_mp3_path TEXT,
+    email_mp3_path TEXT,
+    measured_duration_seconds REAL,
+    qa_status TEXT,                  -- NULL | pass | fail
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -96,6 +103,19 @@ CREATE TABLE IF NOT EXISTS render_chunks (
     measured_render_seconds REAL,
     error_detail TEXT,
     output_wav_path TEXT,
+    -- M4 (POD-11): [PAUSE:Ns] silence to insert before/after this chunk's
+    -- audio at mastering time (app/chunking.py extracts these from the
+    -- script; ComfyUI never sees them, only the plain text does).
+    pause_before_seconds REAL NOT NULL DEFAULT 0,
+    pause_after_seconds REAL NOT NULL DEFAULT 0,
+    -- M4: the voice-reference filename actually submitted for this chunk,
+    -- recorded at submission time so QA's speaker-voice check can verify
+    -- against VOICE_MAPPING post hoc without re-deriving it.
+    voice_reference_used TEXT,
+    -- M4: set by the QA pass when this chunk's own rendered audio clips;
+    -- drives "re-render only the failing chunks" (app/qa.py, app/render.py
+    -- requeue_chunks_for_rerender) rather than the whole episode.
+    qa_clip_detected INTEGER NOT NULL DEFAULT 0,
     started_at TEXT,
     completed_at TEXT
 );
@@ -151,6 +171,18 @@ _MIGRATIONS = (
     "ALTER TABLE render_jobs ADD COLUMN render_ratio_used REAL",
     "ALTER TABLE render_jobs ADD COLUMN error_detail TEXT",
     "ALTER TABLE render_chunks ADD COLUMN speaker TEXT NOT NULL DEFAULT 'HOST_A'",
+    # M4 (POD-11) additive migrations — see render_chunks/episodes CREATE TABLE
+    # comments above for what each column is for.
+    "ALTER TABLE render_chunks ADD COLUMN pause_before_seconds REAL NOT NULL DEFAULT 0",
+    "ALTER TABLE render_chunks ADD COLUMN pause_after_seconds REAL NOT NULL DEFAULT 0",
+    "ALTER TABLE render_chunks ADD COLUMN voice_reference_used TEXT",
+    "ALTER TABLE render_chunks ADD COLUMN qa_clip_detected INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE episodes ADD COLUMN output_dir TEXT",
+    "ALTER TABLE episodes ADD COLUMN wav_master_path TEXT",
+    "ALTER TABLE episodes ADD COLUMN archive_mp3_path TEXT",
+    "ALTER TABLE episodes ADD COLUMN email_mp3_path TEXT",
+    "ALTER TABLE episodes ADD COLUMN measured_duration_seconds REAL",
+    "ALTER TABLE episodes ADD COLUMN qa_status TEXT",
 )
 
 
