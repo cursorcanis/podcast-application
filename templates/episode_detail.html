@@ -55,7 +55,7 @@
   {% endif %}
 </div>
 
-{% if episode.status == 'script_ready' %}
+{% if docs.script %}
 <div class="card">
   <h3>Script (final, saved)</h3>
   <div class="detail">{{ docs.script.body }}</div>
@@ -66,9 +66,26 @@
   <div class="detail">{{ docs.citation_map.body }}</div>
 </div>
 {% endif %}
+{% endif %}
+
+{% if episode.status in ('script_ready', 'rendering', 'rendered') %}
+<div class="card">
+  <h3>Voice rendering (ComfyUI)</h3>
+  <p class="meta">
+    {% if episode.status == 'script_ready' %}Not started yet.
+    {% elif episode.status == 'rendering' %}In progress.
+    {% else %}Rendered.{% endif %}
+  </p>
+  <p><a href="/episodes/{{ episode.id }}/render">
+    {% if episode.status == 'script_ready' %}Start render{% else %}View render progress{% endif %}
+  </a></p>
+</div>
+{% endif %}
+
+{% if episode.status == 'rendered' %}
 <div class="banner ok">
-  Status: script_ready. Rendering, mastering, QA, and email delivery are
-  later milestones (M3-M5) — not yet built.
+  Status: rendered. ffmpeg mastering/export, QA, and email delivery are
+  later milestones (M4-M5) — not yet built.
 </div>
 {% endif %}
 

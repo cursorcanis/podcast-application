@@ -1,0 +1,37 @@
+{
+  "_meta_note": "API-format ComfyUI workflow, as measured and actually executed on POD-3 (see POD-3#document-benchmark, section 6). Node ids below are whatever this file happens to use today -- app/workflow.py never hardcodes them; it discovers the Chatterbox TTS node, the voice-reference loader, and the save node by class_type and by how they are wired together. Swap this file for a different Chatterbox-family workflow (e.g. once the Board approves a production node package) with no code change, as long as it keeps exactly one Chatterbox-family node and exactly one save node wired to its output. PATH_TO_WORKFLOW_JSON in config/app_config.json points here.",
+  "1": {
+    "class_type": "LoadAudio",
+    "_meta": { "title": "Load voice reference clip" },
+    "inputs": {
+      "audio": "voice_a.wav"
+    }
+  },
+  "2": {
+    "class_type": "ChatterboxTTS",
+    "_meta": { "title": "Chatterbox TTS" },
+    "inputs": {
+      "model_pack_name": "resembleai_default_voice",
+      "text": "",
+      "max_new_tokens": 850,
+      "flow_cfg_scale": 0.7,
+      "exaggeration": 0.5,
+      "temperature": 0.8,
+      "cfg_weight": 0.5,
+      "repetition_penalty": 1.2,
+      "min_p": 0.05,
+      "top_p": 1.0,
+      "seed": 42,
+      "use_watermark": false,
+      "audio_prompt": ["1", 0]
+    }
+  },
+  "3": {
+    "class_type": "SaveAudio",
+    "_meta": { "title": "Save chunk" },
+    "inputs": {
+      "audio": ["2", 0],
+      "filename_prefix": "podcast_foundry/chunk"
+    }
+  }
+}

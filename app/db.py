@@ -72,6 +72,11 @@ CREATE TABLE IF NOT EXISTS render_jobs (
     cap_hours INTEGER NOT NULL,
     projected_hours REAL,
     confirmed_over_cap INTEGER NOT NULL DEFAULT 0,
+    chunk_seconds_target INTEGER,  -- current per-chunk target; halved on OOM backoff
+    workflow_path TEXT,            -- frozen at job start (M3: honest state across resumes)
+    comfyui_url TEXT,               -- frozen at job start
+    render_ratio_used REAL,         -- measured s-compute/s-audio ratio used for the projection
+    error_detail TEXT,              -- set when status = failed; names the exact chunk/error
     started_at TEXT,
     finished_at TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -81,12 +86,13 @@ CREATE TABLE IF NOT EXISTS render_chunks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     job_id INTEGER NOT NULL REFERENCES render_jobs(id),
     chunk_index INTEGER NOT NULL,
+    speaker TEXT NOT NULL DEFAULT 'HOST_A',
     text TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending',
         -- pending | submitted | rendering | succeeded | timed_out | failed
     comfyui_prompt_id TEXT,
     attempt_count INTEGER NOT NULL DEFAULT 0,
-    chunk_seconds_target INTEGER,
+    chunk_seconds_target INTEGER,   -- estimated audio seconds for this chunk's text
     measured_render_seconds REAL,
     error_detail TEXT,
     output_wav_path TEXT,
@@ -134,6 +140,29 @@ CREATE TABLE IF NOT EXISTS delivery_records (
 """
 
 
+# Additive migrations for a render_jobs/render_chunks table created by an
+# earlier milestone's CREATE TABLE IF NOT EXISTS (which does not add columns
+# to an existing table). Each is applied once; "duplicate column name" means
+# it already ran and is silently skipped — never a crash on a repeat start.
+_MIGRATIONS = (
+    "ALTER TABLE render_jobs ADD COLUMN chunk_seconds_target INTEGER",
+    "ALTER TABLE render_jobs ADD COLUMN workflow_path TEXT",
+    "ALTER TABLE render_jobs ADD COLUMN comfyui_url TEXT",
+    "ALTER TABLE render_jobs ADD COLUMN render_ratio_used REAL",
+    "ALTER TABLE render_jobs ADD COLUMN error_detail TEXT",
+    "ALTER TABLE render_chunks ADD COLUMN speaker TEXT NOT NULL DEFAULT 'HOST_A'",
+)
+
+
+def _apply_migrations(conn: sqlite3.Connection) -> None:
+    for statement in _MIGRATIONS:
+        try:
+            conn.execute(statement)
+        except sqlite3.OperationalError as exc:
+            if "duplicate column name" not in str(exc).lower():
+                raise
+
+
 def get_connection(db_path: Path | str = DB_PATH) -> sqlite3.Connection:
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(db_path))
@@ -147,6 +176,7 @@ def init_db(db_path: Path | str = DB_PATH) -> None:
     conn = get_connection(db_path)
     try:
         conn.executescript(SCHEMA)
+        _apply_migrations(conn)
         row = conn.execute(
             "SELECT schema_version FROM settings_status WHERE id = 1"
         ).fetchone()

@@ -42,6 +42,13 @@
     <li><strong>SHARE_LOCATION</strong>: {{ settings.share_location }}</li>
     <li><strong>EMAIL_METHOD</strong>: {{ settings.email_method or 'none (paused)' }}</li>
     <li><strong>TTS model</strong>: {{ settings.tts_model }}</li>
+    <li><strong>PATH_TO_WORKFLOW_JSON</strong>: {{ settings.path_to_workflow_json }}</li>
+    <li><strong>VOICE_MAPPING</strong>:
+      {% if settings.voice_mapping %}
+        {% for speaker, clip in settings.voice_mapping.items() %}{{ speaker }} -> {{ clip }}{% if not loop.last %}, {% endif %}{% endfor %}
+      {% else %}(none configured){% endif %}
+    </li>
+    <li><strong>RENDER_SECONDS_PER_AUDIO_SECOND</strong>: {{ settings.render_seconds_per_audio_second }} (measured, POD-3 benchmark)</li>
   </ul>
   <p class="meta">Secrets, when they exist, come only from environment variables — never a value here or in the repo.</p>
 </section>

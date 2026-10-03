@@ -10,9 +10,9 @@ up after a break). It is required by the Board's configuration decision
 A local web app that drives the Podcast Foundry episode pipeline end to end:
 episode intake, the Board's source-approval gate, script review, ComfyUI voice
 rendering, ffmpeg mastering, QA, and delivery — see `README.md` for the
-feature-by-feature status (currently **M2** — episode intake, the Board
-source-approval gate, and hand-entered script review, on top of M1's
-Status/Settings screen).
+feature-by-feature status (currently **M3** — the ComfyUI render pipeline,
+on top of M1's Status/Settings screen and M2's episode intake / Board
+source-approval gate / hand-entered script review).
 
 ## Clone → running, on a clean Windows machine
 
@@ -34,9 +34,31 @@ Status/Settings screen).
    **Script Review**, where you paste outline/script/citation-map text and
    click "Mark script ready." The episode now shows `script_ready` in the
    **Episode Library**.
+6. From the episode page, click **Start render**. If the projected render
+   time is within `MAX_RENDER_HOURS` it starts immediately; if not, you get
+   an explicit confirm screen and nothing is submitted to ComfyUI until you
+   confirm. The render page polls real progress (measured elapsed time and,
+   once a chunk has finished, a projection based on this job's own measured
+   times — never a spinner or a fake percentage). The episode moves to
+   `rendered` once every chunk succeeds.
 
 No Node/npm, no database server, no other runtime dependency for this
 milestone. `ffmpeg` is required starting at M4 (mastering/export), not before.
+
+## ComfyUI prerequisites for a render (M3)
+
+- ComfyUI must be reachable at `COMFYUI_URL` (Status screen shows this live).
+- The workflow file at `PATH_TO_WORKFLOW_JSON` (default
+  `config/comfyui_workflow.json`) must resolve to exactly one Chatterbox-family
+  node and exactly one save-type node wired to its output — `app/workflow.py`
+  discovers node ids dynamically, so the Audio Engineer can swap this file for
+  a different Chatterbox package (once the Board approves one — see POD-3)
+  with no code change.
+- Every speaker tag used in the script (`[HOST_A]`, `[HOST_B]`, ...) needs an
+  entry in `VOICE_MAPPING` (`config/app_config.json`) naming the reference
+  clip filename ComfyUI's voice-reference loader can find — per POD-3, that
+  means the file must sit at the root of ComfyUI's configured `input/`
+  directory, not a subfolder.
 
 ## Configuration
 
@@ -64,19 +86,28 @@ mail today.
 ## Verification status (be honest about what has and hasn't run)
 
 - **Verified in this repo, WSL2-side (`/mnt/c` mount of this same folder):**
-  `python -m pytest tests/ -q` (15/15 passing: 9 M1 + 6 M2). The 6 M2 tests
-  walk one episode through intake, a two-source gate (one approved, one
-  removed), script save, and `script_ready` via `TestClient`, and check that
-  a non-default-list recipient, an out-of-range speed, and a source
-  add/decide/close attempted after the gate has closed are each rejected.
-  Also manually walked the identical flow with `curl` against a live
-  `uvicorn` process on a scratch port, including the three rejection cases,
-  before writing the automated tests.
+  `python -m pytest tests/ -q` (33/33 passing: 9 M1 + 6 M2 + 18 M3). The M3
+  tests cover script chunking, dynamic ComfyUI node discovery against both
+  the real repo workflow file and hand-built alternates (a differently
+  packaged Chatterbox node, an ambiguous/missing-node workflow), and the
+  full render_jobs/render_chunks pipeline with ComfyUI itself monkeypatched.
+- **Verified against the Board's real, live ComfyUI** (not just
+  monkeypatched, via the WSL↔Windows relay documented on POD-3): walked a
+  real episode from intake through a real two-chunk, two-voice render to
+  `rendered`, with real FLAC files confirmed on disk. Separately proved
+  crash/reboot resumability for real: started a 3-chunk render, `kill -9`'d
+  the app process right after chunk 1 succeeded and while chunk 2 was
+  mid-flight, restarted the process, and confirmed chunk 1 kept its original
+  ComfyUI prompt_id (not re-rendered) while chunk 2 got a new one (the
+  in-flight chunk, and only that chunk, re-rendered) before chunk 3 rendered
+  and the job reached `succeeded`.
 - **Not yet verified:** the native-Windows double-click path
-  (`start_app.bat`, Windows path separators, long-path limits). WSL-side
-  testing proves the Python logic; it does not prove the Windows experience.
-  This is tracked as an open risk (build plan risk R7) until it is actually
-  run on Windows and this section is updated to say so.
+  (`start_app.bat`, Windows path separators, long-path limits), and this
+  milestone's render path specifically running as a native Windows process
+  talking to ComfyUI without the WSL relay. WSL-side testing proves the
+  Python logic; it does not prove the Windows experience. This is tracked as
+  an open risk (build plan risk R7) until it is actually run on Windows and
+  this section is updated to say so.
 
 ## Who owns what from here
 

@@ -44,6 +44,9 @@ OVERRIDABLE_KEYS = frozenset(
         "DEFAULT_RECIPIENTS",
         "SENDER_ADDRESS",
         "EMAIL_METHOD",
+        "PATH_TO_WORKFLOW_JSON",
+        "RENDER_SECONDS_PER_AUDIO_SECOND",
+        "CHUNK_SECONDS_TARGET_DEFAULT",
     }
 )
 
@@ -105,6 +108,32 @@ class Config:
         return str(self.values.get("TTS_MODEL") or "chatterbox")
 
     @property
+    def path_to_workflow_json(self) -> str:
+        return str(self.values.get("PATH_TO_WORKFLOW_JSON") or "config/comfyui_workflow.json")
+
+    @property
+    def voice_mapping(self) -> dict[str, str]:
+        """Speaker tag (e.g. HOST_A) -> voice-reference clip filename, as
+        measured on POD-3. Never guessed: an empty mapping here means a
+        render job must fail loud naming the unmapped speaker, not silently
+        pick a default voice."""
+        val = self.values.get("VOICE_MAPPING") or {}
+        return {str(k): str(v) for k, v in dict(val).items()}
+
+    @property
+    def render_seconds_per_audio_second(self) -> float:
+        """The Audio Engineer's measured compute-seconds-per-audio-second
+        ratio (POD-3 benchmark document, conservative/worst-case figure).
+        Used only to project render time before any chunk has completed;
+        once real chunks have rendered, the projection switches to the
+        measured average for this job."""
+        return float(self.values.get("RENDER_SECONDS_PER_AUDIO_SECOND", 3.83))
+
+    @property
+    def chunk_seconds_target_default(self) -> int:
+        return int(self.values.get("CHUNK_SECONDS_TARGET_DEFAULT", 60))
+
+    @property
     def pilot_topic(self) -> str:
         return str(self.values.get("PILOT_TOPIC") or "")
 
@@ -127,6 +156,9 @@ class Config:
             "output_folder": self.output_folder,
             "share_location": self.share_location,
             "tts_model": self.tts_model,
+            "path_to_workflow_json": self.path_to_workflow_json,
+            "voice_mapping": self.voice_mapping,
+            "render_seconds_per_audio_second": self.render_seconds_per_audio_second,
         }
 
 

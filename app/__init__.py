@@ -18,6 +18,14 @@ hand-entered script review (app/episodes.py, app/routes_episodes.py) —
 everything hand-entered, no automatic research or script generation
 (Risk R5). No rendering, no email.
 
+M3 scope (POD-10): the ComfyUI render pipeline (app/render.py,
+app/workflow.py, app/chunking.py, app/routes_render.py) — serial chunked
+submission against the configured workflow JSON, crash/reboot-resumable
+render_jobs/render_chunks state, the one-job-system-wide constraint, the
+10-minute chunk timeout, OOM backoff by halving chunk size, and the
+MAX_RENDER_HOURS confirm-to-proceed gate. No ffmpeg mastering, no QA, no
+email (M4+).
+
 Run:  uvicorn app:app --reload        (or start_app.bat / run.bat on Windows)
 """
 from __future__ import annotations
@@ -30,13 +38,15 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import comfyui, db
+from . import comfyui, db, render
 from .config import config
 from .routes_episodes import router as episodes_router
+from .routes_render import router as render_router
 from .web import templates
 
-app = FastAPI(title="Podcast Foundry", version="0.2.0-m2")
+app = FastAPI(title="Podcast Foundry", version="0.3.0-m3")
 app.include_router(episodes_router)
+app.include_router(render_router)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
@@ -45,6 +55,11 @@ app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="stat
 # the Status screen's DB-backed checks never crash a fresh checkout. Later
 # milestones (M2+) build all episode/render state on this file.
 db.init_db()
+
+# Resumability over speed: any render_job left `running` when the process
+# last stopped (crash, reboot, or a plain restart) gets its worker thread
+# re-started here, picking up from the first non-succeeded chunk.
+render.resume_pending_jobs()
 
 
 def utcnow_iso() -> str:

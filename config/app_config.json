@@ -1,13 +1,17 @@
 {
   "_meta": {
-    "config_revision": "POD-2 configuration document, revision 6 (2026-10-02)",
-    "note": "Board-confirmed values only. No credential may ever be stored here; future secrets come exclusively from the environment (see app/config.py ENV_ONLY_KEYS)."
+    "config_revision": "POD-2 configuration document revision 6, plus POD-3 benchmark values (2026-10-03)",
+    "note": "Board-confirmed values only. No credential may ever be stored here; future secrets come exclusively from the environment (see app/config.py ENV_ONLY_KEYS). PATH_TO_WORKFLOW_JSON, VOICE_MAPPING, and RENDER_SECONDS_PER_AUDIO_SECOND are the Audio Engineer's measured POD-3 benchmark values -- node ids inside that workflow file are never read from here; app/workflow.py discovers them dynamically. The production workflow (node package) is still a pending Board approval per POD-3 -- swapping the file at PATH_TO_WORKFLOW_JSON needs no code change."
   },
   "COMFYUI_URL": "http://127.0.0.1:8188",
   "COMFYUI_VERSION": "detect",
-  "PATH_TO_WORKFLOW_JSON": null,
-  "WORKFLOW_NODE_IDS": null,
-  "VOICE_MAPPING": null,
+  "PATH_TO_WORKFLOW_JSON": "config/comfyui_workflow.json",
+  "VOICE_MAPPING": {
+    "HOST_A": "voice_a.wav",
+    "HOST_B": "voice_b.wav"
+  },
+  "RENDER_SECONDS_PER_AUDIO_SECOND": 3.83,
+  "CHUNK_SECONDS_TARGET_DEFAULT": 60,
   "MAX_RENDER_HOURS": 3,
   "CHUNK_TIMEOUT_MIN": 10,
   "OUTPUT_FOLDER": "C:\\Users\\alfre\\Desktop\\_desktop\\_projects\\_ComfyUI\\output\\podcast_foundry",

@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}Render — {{ episode.title }} — Podcast Foundry{% endblock %}
+{% block content %}
+
+<h2>Voice rendering — {{ episode.title }}</h2>
+<p><a href="/episodes/{{ episode.id }}">&larr; back to episode</a></p>
+
+{% if error %}
+<div class="banner error">{{ error }}</div>
+{% endif %}
+
+{% if blocked_by_other %}
+<div class="banner warn">
+  Render job {{ system_active.id }} for episode {{ system_active.episode_id }} is already
+  {{ system_active.status }} — only one render job may run system-wide at a time (the GPU is
+  the bottleneck). Wait for it to finish before starting this episode's render.
+</div>
+
+{% elif job is none %}
+  {% if episode.status != 'script_ready' %}
+  <div class="banner warn">
+    This episode is not script_ready (status is {{ episode.status }}) — nothing to render yet.
+  </div>
+  {% elif preview %}
+  <div class="card">
+    <h3>Render plan (preview — nothing submitted yet)</h3>
+    <ul>
+      <li>Chunks: {{ preview.chunk_count }}</li>
+      <li>Total estimated audio: {{ "%.0f"|format(preview.total_estimated_seconds) }}s</li>
+      <li>Projected render time: {{ preview.projected_hours }}h (cap: {{ preview.cap_hours }}h)</li>
+      <li>Chunk target: {{ preview.chunk_seconds_target }}s of audio per chunk</li>
+    </ul>
+    {% if preview.over_cap %}
+    <p class="banner warn">
+      Projected render time exceeds MAX_RENDER_HOURS. Starting the render will require an
+      explicit confirmation before any chunk is submitted.
+    </p>
+    {% endif %}
+    <form method="post" action="/episodes/{{ episode.id }}/render/start">
+      <button type="submit">Start render</button>
+    </form>
+  </div>
+  {% endif %}
+
+{% else %}
+  {% if job.status == 'awaiting_cap_confirmation' %}
+  <div class="banner warn">
+    <p>
+      Projected render time <strong>{{ job.projected_hours }}h</strong> exceeds the configured cap of
+      <strong>{{ job.cap_hours }}h</strong>. No chunk has been submitted to ComfyUI yet.
+    </p>
+    <form method="post" action="/episodes/{{ episode.id }}/render/confirm" style="display:inline">
+      <button type="submit">Confirm and start anyway</button>
+    </form>
+    <form method="post" action="/episodes/{{ episode.id }}/render/cancel" style="display:inline">
+      <button type="submit">Cancel</button>
+    </form>
+  </div>
+  {% else %}
+  <section class="card">
+    <h3>Job {{ job.id }} — <span id="job-status" class="status-pill">{{ job.status }}</span></h3>
+    <p class="meta">
+      Elapsed: <span id="elapsed">—</span> ·
+      Projected total: <span id="projected">—</span> ·
+      Remaining: <span id="remaining">—</span>
+      (<span id="projection-basis">—</span>)
+    </p>
+    <p class="meta">
+      Chunks: <span id="count-succeeded">0</span> succeeded /
+      <span id="count-in-flight">0</span> in flight /
+      <span id="count-pending">0</span> pending /
+      <span id="count-failed">0</span> failed
+      of <span id="count-total">0</span>
+    </p>
+    {% if job.status == 'running' %}
+    <form method="post" action="/episodes/{{ episode.id }}/render/cancel">
+      <button type="submit">Cancel render</button>
+    </form>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <h3>Chunks</h3>
+    <table id="chunk-table" style="width:100%; font-size: 13px; border-collapse: collapse;">
+      <thead>
+        <tr><th style="text-align:left">#</th><th style="text-align:left">Speaker</th>
+            <th style="text-align:left">Status</th><th style="text-align:left">Attempts</th>
+            <th style="text-align:left">Measured (s)</th><th style="text-align:left">Error</th></tr>
+      </thead>
+      <tbody id="chunk-rows"></tbody>
+    </table>
+  </section>
+  {% endif %}
+{% endif %}
+
+{% endblock %}
+{% block scripts %}
+{% if job is not none and job.status == 'running' %}
+<script>window.PODCAST_FOUNDRY_EPISODE_ID = {{ episode.id }};</script>
+<script src="/static/render.js"></script>
+{% endif %}
+{% endblock %}

@@ -10,7 +10,8 @@ REM No credential is needed or referenced here. Env vars (NAMES only) are read
 REM from the process environment / a local gitignored .env:
 REM   COMFYUI_URL, OUTPUT_FOLDER, SHARE_LOCATION, MAX_RENDER_HOURS,
 REM   CHUNK_TIMEOUT_MIN, MAX_ATTACHMENT_MB, MONTHLY_BUDGET, EMAIL_METHOD,
-REM   SMTP_USER, SMTP_PASS
+REM   SMTP_USER, SMTP_PASS, PATH_TO_WORKFLOW_JSON,
+REM   RENDER_SECONDS_PER_AUDIO_SECOND, CHUNK_SECONDS_TARGET_DEFAULT
 cd /d "%~dp0"
 
 if not exist .venv (
