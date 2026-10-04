@@ -6,7 +6,7 @@ script review, ComfyUI voice rendering, ffmpeg mastering, QA, and delivery.
 This repo is being built milestone by milestone; see the table below for what
 works today.
 
-## Current status — M5 (delivery-paused handling + share handoff)
+## Current status — M6 (presets, voice profiles, saved lists)
 
 - FastAPI + SQLite app skeleton (M1).
 - **Status / Settings** screen at `http://127.0.0.1:8000` with the live
@@ -14,10 +14,17 @@ works today.
   banner, and the standing **email delivery paused — see POD-7** notice.
 - **New Episode** (`/episodes/new`) — query/URL entry; settings (format,
   tone, cadence, speed 0.8x–1.3x, target length, audience level); voice
-  label(s) (plain text — the saved voice-profile picker arrives later);
-  recipients, restricted to `DEFAULT_RECIPIENTS` or a saved recipient list —
-  a typed-in address outside that set is rejected server-side, not just
-  hidden in the UI.
+  label(s), with saved voice profiles offered as suggestions; recipients,
+  restricted to `DEFAULT_RECIPIENTS` or a saved recipient list — a typed-in
+  address outside that set is rejected server-side, not just hidden in the UI.
+- **Settings** (`/settings`) — voice profiles (a named voice tied to a
+  Chatterbox reference clip, with a **30s sample-render** audition that runs
+  through the exact same ComfyUI workflow and reference clip the episode
+  render uses), tone/cadence presets (offered as suggestions on New Episode),
+  and saved recipient lists (an address may only be added if it is already on
+  `DEFAULT_RECIPIENTS` — a list can never smuggle an unapproved address in).
+  Rendering is still driven by the Audio Engineer's `VOICE_MAPPING`
+  (read-only here, cross-checkable against a profile's reference clip).
 - **Source Review** (`/episodes/{id}/sources`) — the Board gate. A standing
   page, not a modal: add hand-entered/pasted candidate sources, approve or
   remove each, and close the gate once every source has a decision and at
@@ -86,8 +93,8 @@ works today.
   episode's recorded (already validated) list. No credential is stored,
   logged, or displayed; SMTP env names are read from the environment only.
 
-Not yet: an actual email send (paused until POD-7), voice-profile picker,
-tone/cadence presets, saved recipient-list management. Those arrive in later milestones.
+Not yet: an actual email send (paused until POD-7), and auto-generated
+research/script (open Board decision — build plan Risk R5, not built).
 
 ## Prerequisites (Windows)
 
@@ -185,6 +192,12 @@ or a fake success), that resend refuses a double-send after a `sent` record,
 and that a recipient outside the allowed set is refused. No real SMTP send
 happens anywhere in the suite (none may, until POD-7 resolves).
 
+`tests/test_settings.py` is the M6 settings suite: voice-profile create/list/
+delete and duplicate rejection, tone/cadence preset create/list/delete, saved
+recipient lists restricted to `DEFAULT_RECIPIENTS`, the sample-render guards
+(refuse a profile with no reference clip; refuse while an episode render job
+is system-wide active), and that saved lists fold into
+`allowed_recipient_emails()`.
 
 **Also verified against the Board's real, live ComfyUI** (not just
 monkeypatched): a two-chunk two-host episode rendered end to end through the
@@ -213,7 +226,10 @@ outcome, run for real, not simulated.
   separate task queue to run or configure). It is **not** restarted by a
   code change or `--reload`; only a real process restart (or the app's own
   startup, which calls `render.resume_pending_jobs()`) picks a `running` job
-  back up.
+  back up. The M6 voice-sample render uses a separate short-lived thread,
+  refuses to start while an episode job is active, and its in-flight status
+  is in-memory (a crash loses at most one short audition line — documented,
+  not silent).
 
 ## Project layout
 
@@ -237,11 +253,13 @@ app/routes_postprod.py M4 routes: postprod run, QA run/retry, download WAV/MP3
 app/delivery.py       M5 delivery: paused handoff to SHARE_LOCATION + smtp send behind
                       EMAIL_METHOD; idempotent, logged, never a double-send
 app/routes_delivery.py M5 route: POST /episodes/{id}/delivery/resend (explicit, guarded)
+app/settings.py        M6 voice profiles / presets / recipient lists + the 30s sample render
+app/routes_settings.py M6 routes: /settings + profile/preset/list CRUD + sample status
 app/web.py             shared Jinja2Templates instance
 config/app_config.json       the Board-confirmed values (no credentials)
 config/comfyui_workflow.json the measured, working ComfyUI workflow (POD-3) — swap freely;
                              node ids are never read from code
-templates/             Jinja2 templates (base, status, episodes_list, episode_new,
+templates/             Jinja2 templates (base, status, settings, episodes_list, episode_new,
                        episode_detail, episode_sources, episode_script, episode_render)
 static/                style.css, status.js, render.js (all measured polling, no spinner)
 tests/test_smoke.py    M1 smoke tests
@@ -253,6 +271,7 @@ tests/test_render.py   M3 integration tests (render_jobs/render_chunks pipeline,
 tests/test_postprod_qa.py M4 integration tests (mastering/export + QA), ComfyUI stub,
                        real ffmpeg (real tone files on disk)
 tests/test_delivery.py M5 delivery tests (paused handoff + activate-with-no-code-change)
+tests/test_settings.py M6 settings tests (profiles/presets/lists + sample-render guards)
 start_app.bat          Windows launcher
 .env.example           env var NAMES only
 app.py / config.py / db.py   superseded fail-loud stubs at repo root (see below)

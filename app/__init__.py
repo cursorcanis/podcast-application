@@ -41,6 +41,13 @@ button stays visible but disabled with the pause reason, wired to the same
 delivery boundary so a future EMAIL_METHOD decision activates it with no code
 change. Delivery is idempotent and logged — never automatic, never a double-send.
 
+M6 scope (POD-13): the Settings page (app/settings.py, app/routes_settings.py)
+— voice profiles tied to Chatterbox reference clips with a 30s sample-render
+audition, tone/cadence presets, and saved recipient lists (restricted to
+DEFAULT_RECIPIENTS). These are conveniences; the Board still makes the
+per-episode choices, and rendering is still driven by the Audio Engineer's
+VOICE_MAPPING (read-only here), never by invented linkage.
+
 Run:  uvicorn app:app --reload        (or start_app.bat / run.bat on Windows)
 """
 from __future__ import annotations
@@ -59,20 +66,24 @@ from .routes_delivery import router as delivery_router
 from .routes_episodes import router as episodes_router
 from .routes_postprod import router as postprod_router
 from .routes_render import router as render_router
+from .routes_settings import router as settings_router
 from .web import templates
 
-app = FastAPI(title="Podcast Foundry", version="0.5.0-m5")
+app = FastAPI(title="Podcast Foundry", version="0.6.0-m6")
 app.include_router(episodes_router)
 app.include_router(render_router)
 app.include_router(postprod_router)
 app.include_router(delivery_router)
+app.include_router(settings_router)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 
 # Ensure the SQLite state file exists at startup (repo/data/, gitignored) so
 # the Status screen's DB-backed checks never crash a fresh checkout. Later
-# milestones (M2+) build all episode/render state on this file.
+# milestones (M2+) build all episode/render state on this file, and M6's
+# voice_profiles/presets/recipient_lists tables live here too (created by
+# db.SCHEMA).
 db.init_db()
 
 # Resumability over speed: any render_job left `running` when the process

@@ -1,0 +1,178 @@
+{% extends "base.html" %}
+{% block title %}Settings — Podcast Foundry{% endblock %}
+{% block content %}
+
+<h2>Settings</h2>
+<p class="meta">
+  Voice profiles, tone/cadence presets, and saved recipient lists — everything
+  here is optional convenience; the Board still makes the per-episode choices
+  on the New Episode form.
+</p>
+
+{% if error %}<div class="banner error">{{ error }}</div>{% endif %}
+
+<div class="card">
+  <h3>Voice profiles</h3>
+  <p class="meta">
+    A named voice tied to a Chatterbox reference clip (<code>comfyui_voice_ref</code> — the
+    same filename a render looks up). The 30s sample render auditions this profile
+    through the exact ComfyUI workflow and reference clip the episode render uses;
+    the Audio Engineer's <code>VOICE_MAPPING</code> is shown read-only so you can
+    cross-check, since that mapping (not this table) is what actually drives rendering.
+  </p>
+  <table class="table">
+    <tr>
+      <th>Name</th><th>Reference clip</th><th>Clip path (ComfyUI/input)</th>
+      <th>Notes</th><th>Sample</th><th></th>
+    </tr>
+    {% for p in voice_profiles %}
+    <tr>
+      <td>{{ p.name }}</td>
+      <td><code>{{ p.comfyui_voice_ref or "—" }}</code></td>
+      <td><code>{{ p.reference_clip_path or "—" }}</code></td>
+      <td>{{ p.notes or "—" }}</td>
+      <td>
+        {% set st = sample_states.get(p.id, {}) %}
+        {% if not p.comfyui_voice_ref %}
+        <span class="meta">set a reference clip first</span>
+        {% elif st.status == 'running' %}
+        <span class="status-pill checking">rendering… {{ st.elapsed_seconds }}s</span>
+        {% elif st.status == 'succeeded' %}
+        <span class="status-pill ok">done ({{ st.elapsed_seconds }}s)</span>
+        {% elif st.status == 'failed' %}
+        <span class="status-pill fail">failed</span>
+        {% else %}
+        <form method="post" action="/settings/voice-profiles/{{ p.id }}/sample"
+              style="display:inline;">
+          <button type="submit">Render 30s sample</button>
+        </form>
+        {% endif %}
+      </td>
+      <td>
+        <form method="post" action="/settings/voice-profiles/{{ p.id }}/delete"
+              style="display:inline;"
+              onsubmit="return confirm('Delete voice profile {{ p.name }}?');">
+          <button type="submit" class="danger">Delete</button>
+        </form>
+      </td>
+    </tr>
+    {% if st.status == 'failed' and st.error_detail %}
+    <tr><td colspan="6" class="banner fail">{{ st.error_detail }}</td></tr>
+    {% endif %}
+    {% if st.status == 'succeeded' and st.output_path %}
+    <tr><td colspan="6" class="meta">Sample: <code>{{ st.output_path }}</code></td></tr>
+    {% endif %}
+    {% else %}
+    <tr><td colspan="6" class="meta">No voice profiles yet.</td></tr>
+    {% endfor %}
+  </table>
+
+  {% if voice_mapping %}
+  <p class="meta">Audio Engineer's VOICE_MAPPING (read-only, drives rendering):
+    {% for k, v in voice_mapping.items() %}<code>{{ k }} → {{ v }}</code>{% if not loop.last %}, {% endif %}{% endfor %}
+  </p>
+  {% endif %}
+
+  <h4>Add voice profile</h4>
+  <form method="post" action="/settings/voice-profiles" class="form">
+    <div class="grid-2">
+      <label>Name<input type="text" name="name" required placeholder="e.g. Dana — warm, measured"></label>
+      <label>Reference clip (comfyui_voice_ref)<input type="text" name="comfyui_voice_ref"
+        placeholder="e.g. voice_a.wav"></label>
+      <label>Clip path under ComfyUI/input<input type="text" name="reference_clip_path"
+        placeholder="optional — informational only"></label>
+      <label>Notes<input type="text" name="notes" placeholder="optional"></label>
+    </div>
+    <button type="submit">Save profile</button>
+  </form>
+</div>
+
+<div class="card">
+  <h3>Presets (tone &amp; cadence)</h3>
+  <p class="meta">
+    Suggested tone/cadence values offered on the New Episode form. The Board still
+    picks per episode, and the episode row records which defaults were applied.
+  </p>
+  <h4>Tone</h4>
+  {% if tone_presets %}
+  <ul>
+    {% for p in tone_presets %}
+    <li>{{ p.name }} — <code>{{ p.params }}</code>
+      <form method="post" action="/settings/presets/{{ p.id }}/delete" style="display:inline;"
+            onsubmit="return confirm('Delete tone preset {{ p.name }}?');">
+        <button type="submit" class="danger">Delete</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}<p class="meta">No tone presets.</p>{% endif %}
+  <h4>Cadence</h4>
+  {% if cadence_presets %}
+  <ul>
+    {% for p in cadence_presets %}
+    <li>{{ p.name }} — <code>{{ p.params }}</code>
+      <form method="post" action="/settings/presets/{{ p.id }}/delete" style="display:inline;"
+            onsubmit="return confirm('Delete cadence preset {{ p.name }}?');">
+        <button type="submit" class="danger">Delete</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}<p class="meta">No cadence presets.</p>{% endif %}
+
+  <h4>Add preset</h4>
+  <form method="post" action="/settings/presets" class="form">
+    <div class="grid-2">
+      <label>Kind
+        <select name="kind">
+          <option value="tone">tone</option>
+          <option value="cadence">cadence</option>
+        </select>
+      </label>
+      <label>Name<input type="text" name="name" required placeholder="e.g. investigative"></label>
+      <label>Value<input type="text" name="params" required
+        placeholder="e.g. investigative, measured"></label>
+    </div>
+    <button type="submit">Save preset</button>
+  </form>
+</div>
+
+<div class="card">
+  <h3>Saved recipient lists</h3>
+  <p class="meta">
+    A saved list may only contain addresses already on DEFAULT_RECIPIENTS — it can
+    never add an unapproved address to an episode or a send. Per-episode additions
+    stay on the episode record itself.
+  </p>
+  <table class="table">
+    <tr><th>Name</th><th>Recipients</th><th></th></tr>
+    {% for rl in recipient_lists %}
+    <tr>
+      <td>{{ rl.name }}</td>
+      <td>{{ rl.emails | join(", ") }}</td>
+      <td>
+        <form method="post" action="/settings/recipient-lists/{{ rl.id }}/delete"
+              style="display:inline;"
+              onsubmit="return confirm('Delete recipient list {{ rl.name }}?');">
+          <button type="submit" class="danger">Delete</button>
+        </form>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="3" class="meta">No saved recipient lists.</td></tr>
+    {% endfor %}
+  </table>
+
+  <p class="meta">Allowed base addresses (DEFAULT_RECIPIENTS): {{ default_recipients | join(", ") }}</p>
+
+  <h4>Add recipient list</h4>
+  <form method="post" action="/settings/recipient-lists" class="form">
+    <label>Name<input type="text" name="name" required placeholder="e.g. Board"></label>
+    <label>Recipients (one per line — must be in DEFAULT_RECIPIENTS)
+      <textarea name="emails" rows="3" required></textarea>
+    </label>
+    <button type="submit">Save list</button>
+  </form>
+</div>
+
+{% endblock %}

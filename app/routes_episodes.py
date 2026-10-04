@@ -6,6 +6,10 @@ redirects back to the originating page with the exact validation message in
 an `error` query parameter rather than a generic failure — there is no
 session/flash mechanism in this app, so the message rides in the redirect
 URL and the GET handler below renders it if present.
+
+M6 (POD-13) addition: the New Episode form now surfaces tone/cadence presets,
+saved voice profiles, and saved recipient lists (all read-only suggestions —
+the Board still picks, and app/episodes.py keeps the same hard validation).
 """
 from __future__ import annotations
 
@@ -14,7 +18,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from . import delivery, episodes
+from . import delivery, episodes, settings
 from .config import config
 from .web import templates
 
@@ -55,6 +59,10 @@ def new_episode_form(request: Request):
             "max_length": episodes.MAX_LENGTH_MINUTES,
             "valid_formats": episodes.VALID_FORMATS,
             "valid_audience_levels": episodes.VALID_AUDIENCE_LEVELS,
+            "voice_profiles": settings.list_voice_profiles(),
+            "tone_presets": settings.list_presets("tone"),
+            "cadence_presets": settings.list_presets("cadence"),
+            "recipient_lists": settings.list_recipient_lists(),
         },
     )
 

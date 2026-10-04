@@ -10,10 +10,11 @@ up after a break). It is required by the Board's configuration decision
 A local web app that drives the Podcast Foundry episode pipeline end to end:
 episode intake, the Board's source-approval gate, script review, ComfyUI voice
 rendering, ffmpeg mastering, QA, and delivery — see `README.md` for the
-feature-by-feature status (currently **M5** — delivery-paused handling and the
-share-folder handoff, on top of M1's Status/Settings screen, M2's episode
-intake / Board source-approval gate / hand-entered script review, M3's
-ComfyUI render pipeline, and M4's ffmpeg mastering/export + QA).
+feature-by-feature status (currently **M6** — presets, voice profiles, shared
+recipient lists, on top of M1's Status/Settings screen, M2's episode intake /
+Board source-approval gate / hand-entered script review, M3's ComfyUI render
+pipeline, M4's ffmpeg mastering/export + QA, and M5's delivery-paused handling
+and the share-folder handoff).
 
 ## Clone → running, on a clean Windows machine
 
@@ -59,6 +60,12 @@ ComfyUI render pipeline, and M4's ffmpeg mastering/export + QA).
    Board reopens POD-7 and sets `EMAIL_METHOD` + `SMTP_USER`/`SMTP_PASS` in
    the environment — at which point the same button activates a real send
    with no code change.
+10. Optional, on the **Settings** page: create voice profiles (name +
+    Chatterbox reference clip) and audition each with a **30s sample render**
+    (which refuses to run while an episode render is active — one GPU, one
+    job); add tone/cadence presets (offered as suggestions on New Episode);
+    and save recipient lists (an address may only be added if it is already
+    on `DEFAULT_RECIPIENTS`).
 
 No Node/npm, no database server, no other runtime dependency for this
 milestone.
@@ -76,7 +83,8 @@ milestone.
   entry in `VOICE_MAPPING` (`config/app_config.json`) naming the reference
   clip filename ComfyUI's voice-reference loader can find — per POD-3, that
   means the file must sit at the root of ComfyUI's configured `input/`
-  directory, not a subfolder.
+  directory, not a subfolder. (The Settings voice profiles are a convenience
+  and audition aid; `VOICE_MAPPING` remains what actually drives rendering.)
 
 ## Configuration
 
@@ -88,8 +96,16 @@ its history — never a value.** Set real values via Windows System Properties �
 Environment Variables, or a local `.env` (already gitignored, never commit it).
 
 Email delivery is paused by Board decision — see the Board's POD-7 ticket.
-`EMAIL_METHOD` stays unset until that is reopened; nothing in this app sends
-mail today.
+`EMAIL_METHOD` stays unset today; nothing in this app sends mail.
+
+**Update 2026-10-04 (POD-33):** the Board chose **AgentMail** as the sending
+method, settling the earlier AgentMail-address / Gmail-SMTP-method conflict.
+AgentMail is not connectable through Paperclip from this board (catalog state
+`unavailable`), so the app needs its own AgentMail credential read from the
+environment by name — `AGENTMAIL_API_KEY` and `AGENTMAIL_FROM`. The
+`EMAIL_METHOD=agentmail` sender is a tracked child ticket of POD-33; delivery
+stays paused until both the sender exists and the Board issues the key. The
+`smtp` path remains written and tested as the fallback if the Board reverts.
 
 ## Repository location and push discipline
 
@@ -118,6 +134,23 @@ mail today.
   fails loud naming the env names (never a fake success), that resend
   refuses a double-send after a `sent` record, and that a recipient outside
   the allowed set is refused. No real SMTP send happens anywhere in the suite.
+- **M6 is written and test-run; the result is a clean pass.** `python -m
+  pytest tests/ -q` → **53 passed, 1 warning** (the M1–M5 suites, previously
+  45, plus the 8 new `tests/test_settings.py` cases covering voice profiles,
+  tone/cadence presets, recipient-list membership enforcement against
+  `DEFAULT_RECIPIENTS`, and the 30s sample-render path). No fixes were
+  needed; the lone warning is a Starlette `httpx`-in-`TestClient` deprecation
+  notice, unrelated to M6. Run from the canonical repo path above with the
+  repo's own `.venv` (Python 3.14).
+- **Committed and pushed 2026-10-04.** The Board answered the open POD-33
+  question — commit M6 now, before any Windows end-to-end run — so the M6
+  files (`app/settings.py`, `app/routes_settings.py`,
+  `templates/settings.html`, `tests/test_settings.py`, plus edits to
+  `app/__init__.py`, `app/routes_episodes.py`, `templates/base.html`,
+  `templates/episode_new.html`, `static/status.js`, `static/style.css`,
+  `README.md`, `START_HERE.md`, this file) landed on top of commit `ab88757`
+  (M5) and are on GitHub. All six milestones are now in git history. The
+  suite was re-run green (53/53) immediately before the commit.
 - **Verified against the Board's real, live ComfyUI** (not just
   monkeypatched, via the WSL↔Windows relay documented on POD-3): walked a
   real episode from intake through a real two-chunk, two-voice render to

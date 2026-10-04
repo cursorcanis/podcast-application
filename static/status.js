@@ -5,7 +5,12 @@
 
   function el(id) { return document.getElementById(id); }
 
+  // Honest no-op when the page has no Status card (every page shares the
+  // base template, but only the Status screen renders the ComfyUI elements).
+  function hasStatusCard() { return el("comfyui-status") !== null; }
+
   function renderComfyUI(body) {
+    if (!hasStatusCard()) { return; }
     var pill = el("comfyui-status");
     var detail = el("comfyui-detail");
     var checked = el("checked-at");
@@ -32,6 +37,7 @@
       .then(function (r) { return r.json(); })
       .then(renderComfyUI)
       .catch(function (err) {
+        if (!hasStatusCard()) { return; }
         el("comfyui-status").textContent = "PROBE FAILED";
         el("comfyui-status").className = "status-pill bad";
         el("comfyui-detail").textContent =
@@ -39,6 +45,8 @@
       });
   }
 
-  poll();
-  setInterval(poll, POLL_MS);
+  if (hasStatusCard()) {
+    poll();
+    setInterval(poll, POLL_MS);
+  }
 })();

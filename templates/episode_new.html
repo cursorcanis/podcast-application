@@ -35,10 +35,22 @@
 
   <div class="grid-2">
     <label>Tone
-      <input type="text" name="tone" placeholder="e.g. investigative, conversational">
+      <input type="text" name="tone" list="tone-presets"
+        placeholder="e.g. investigative, conversational">
+      {% if tone_presets %}
+      <datalist id="tone-presets">
+        {% for p in tone_presets %}<option value="{{ p.params }}">{{ p.name }}</option>{% endfor %}
+      </datalist>
+      {% endif %}
     </label>
     <label>Cadence
-      <input type="text" name="cadence" placeholder="default: conversational">
+      <input type="text" name="cadence" list="cadence-presets"
+        placeholder="default: conversational">
+      {% if cadence_presets %}
+      <datalist id="cadence-presets">
+        {% for p in cadence_presets %}<option value="{{ p.params }}">{{ p.name }}</option>{% endfor %}
+      </datalist>
+      {% endif %}
     </label>
     <label>Speed ({{ min_speed }}x – {{ max_speed }}x)
       <input type="number" name="speed" min="{{ min_speed }}" max="{{ max_speed }}"
@@ -61,16 +73,23 @@
   <fieldset>
     <legend>Voice label(s)</legend>
     <p class="meta">
-      Plain text for now — the saved voice-profile picker tied to ComfyUI
-      reference clips arrives in a later milestone. Describe the voice(s)
-      you intend to use (e.g. "Dana — warm, measured female").
+      A free-text label recorded on the episode, with saved voice profiles
+      offered as suggestions. The actual render voice is the Audio Engineer's
+      <code>VOICE_MAPPING</code> (speaker tag → reference clip); manage and
+      audition those on the <a href="/settings">Settings</a> page.
+      Describe the voice(s) you intend to use.
     </p>
     <label id="voice-1-label">Host voice
-      <input type="text" name="voice_1" placeholder="Host voice">
+      <input type="text" name="voice_1" list="voice-profiles" placeholder="Host voice">
     </label>
     <label id="voice-2-label" style="display:none;">Host B voice
-      <input type="text" name="voice_2" placeholder="Host B voice">
+      <input type="text" name="voice_2" list="voice-profiles" placeholder="Host B voice">
     </label>
+    {% if voice_profiles %}
+    <datalist id="voice-profiles">
+      {% for p in voice_profiles %}<option value="{{ p.name }}">{% if p.comfyui_voice_ref %}({{ p.comfyui_voice_ref }}){% endif %}</option>{% endfor %}
+    </datalist>
+    {% endif %}
   </fieldset>
 
   <fieldset>
@@ -87,6 +106,17 @@
       {{ email }}
     </label>
     {% endfor %}
+    {% if recipient_lists %}
+    <p class="meta">
+      Saved lists:
+      {% for rl in recipient_lists %}
+      <button type="button" class="chip" onclick="selectList('{{ rl.emails | join(',') }}')">
+        {{ rl.name }}
+      </button>
+      {% endfor %}
+      (click to toggle that list's recipients)
+    </p>
+    {% endif %}
   </fieldset>
 
   <button type="submit">Create episode</button>
@@ -104,5 +134,13 @@
   fmt.addEventListener("change", sync);
   sync();
 })();
+
+function selectList(csv) {
+  var emails = csv.split(",");
+  var boxes = document.querySelectorAll('input[name="recipient_emails"]');
+  boxes.forEach(function (box) {
+    if (emails.indexOf(box.value) !== -1) { box.checked = true; }
+  });
+}
 </script>
 {% endblock %}
