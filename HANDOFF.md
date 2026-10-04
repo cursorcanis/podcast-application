@@ -98,14 +98,29 @@ Environment Variables, or a local `.env` (already gitignored, never commit it).
 Email delivery is paused by Board decision — see the Board's POD-7 ticket.
 `EMAIL_METHOD` stays unset today; nothing in this app sends mail.
 
-**Update 2026-10-04 (POD-33):** the Board chose **AgentMail** as the sending
-method, settling the earlier AgentMail-address / Gmail-SMTP-method conflict.
-AgentMail is not connectable through Paperclip from this board (catalog state
-`unavailable`), so the app needs its own AgentMail credential read from the
-environment by name — `AGENTMAIL_API_KEY` and `AGENTMAIL_FROM`. The
-`EMAIL_METHOD=agentmail` sender is a tracked child ticket of POD-33; delivery
-stays paused until both the sender exists and the Board issues the key. The
-`smtp` path remains written and tested as the fallback if the Board reverts.
+**Update 2026-10-04 (POD-33), superseding the AgentMail decision earlier the
+same day:** the Board's final answer is **Gmail SMTP with a Google app
+password**. AgentMail was briefly chosen and then dropped once it turned out
+not to be connectable through Paperclip's catalog (state `unavailable`), which
+would have meant a standalone AgentMail account and API key — more setup than
+Gmail, not less. The `EMAIL_METHOD=agentmail` sender ticket was **cancelled
+before any code was written**; there is no `agentmail` branch in
+`app/delivery.py` and none is wanted.
+
+No new code is required for the chosen path. Activation is configuration only:
+`EMAIL_METHOD=smtp` plus `SMTP_USER` / `SMTP_PASS` in the environment or a
+local `.env`, with `SMTP_HOST` / `SMTP_PORT` defaulting to
+`smtp.gmail.com:587` (STARTTLS) and `SENDER_ADDRESS` falling back to
+`SMTP_USER`. Delivery stays paused until the Board puts the app password in
+`.env` on the Windows host; that is a Board action, not an engineering one.
+The documented end-user procedure lives in `START_HERE.md` section 3a. Do not
+ask the Board to send the credential through a ticket, a comment, or a chat
+message — it goes straight into `.env`, which `.gitignore` already covers.
+
+One verification remains outstanding and is tracked on the board: a single
+real SMTP send (the 30-second benchmark clip, not a full episode) to prove the
+login works. Until that runs, the `smtp` path is unit-tested but has never
+touched a real mail server.
 
 ## Repository location and push discipline
 

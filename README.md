@@ -93,7 +93,10 @@ works today.
   episode's recorded (already validated) list. No credential is stored,
   logged, or displayed; SMTP env names are read from the environment only.
 
-Not yet: an actual email send (paused until POD-7), and auto-generated
+Not yet: an actual email send — the Board chose Gmail SMTP (POD-33) and the
+`smtp` path is written and unit-tested, but it stays paused until the app
+password is in a local `.env`, and it has never yet touched a real mail
+server. Also not built: auto-generated
 research/script (open Board decision — build plan Risk R5, not built).
 
 ## Prerequisites (Windows)
@@ -137,8 +140,9 @@ local `.env` (gitignored) and fill values there — never commit a value.
 | `CHUNK_TIMEOUT_MIN` | per-chunk timeout | `10` |
 | `MAX_ATTACHMENT_MB` | email attachment limit | `20` |
 | `MONTHLY_BUDGET` | budget banner ($0 = free-only) | `0` |
-| `EMAIL_METHOD` | **leave empty — delivery is PAUSED (POD-7)** | empty |
-| `SMTP_USER` / `SMTP_PASS` | env var **names** for future delivery; do not set until POD-7 restarts | unset |
+| `EMAIL_METHOD` | empty = delivery PAUSED (today's state); `smtp` activates the Gmail sender — Board's chosen method, POD-33 | empty |
+| `SMTP_USER` / `SMTP_PASS` | Gmail address + 16-char Google **app password**. Set in a local `.env` only, never in a config file or a ticket. All three of these must be set together or the send fails loud. | unset |
+| `SMTP_HOST` / `SMTP_PORT` | optional; default to Gmail's STARTTLS endpoint | `smtp.gmail.com` / `587` |
 | `PATH_TO_WORKFLOW_JSON` | ComfyUI API-format workflow file (node ids read dynamically, never hardcoded) | `config/comfyui_workflow.json` |
 | `RENDER_SECONDS_PER_AUDIO_SECOND` | compute-seconds-per-audio-second ratio used for the pre-render cap projection (POD-3 benchmark) | `3.83` |
 | `CHUNK_SECONDS_TARGET_DEFAULT` | audio seconds targeted per chunk before a speaker turn is split further | `60` |

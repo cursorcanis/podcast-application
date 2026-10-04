@@ -13,3 +13,9 @@ venv/
 # Runtime state
 data/*.db
 data/*.db-journal
+
+# Episode deliverables. SHARE_LOCATION is the paused-delivery handoff folder;
+# a single episode is ~250 MB of audio (the WAV master alone is over GitHub's
+# 100 MB per-file limit). Episodes are products, not source — they live on
+# disk and in OUTPUT_FOLDER, never in the repo.
+_output_podcast_folder/

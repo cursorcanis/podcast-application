@@ -54,6 +54,13 @@ Files are in
 - `show_notes.md` — summary, timestamped segments, source list
 - `qa_report.md`, `citation_map.md`, `script.md`, `post_production_report.json`
 
+Those eight files are **also now in the share folder**, at
+`...\_podcast_application\_output_podcast_folder\2026-10-04_hidden-in-plain-sight\`.
+The pilot was made by hand-run scripts, which skipped the app's share-folder
+handoff, so I copied them across on 2026-10-04 — the share folder is where
+every future episode will appear while delivery is paused, and it was empty
+until now. Originals are untouched.
+
 **The app: code-complete, test-green, but not yet proven as a one-click
 program.** All six milestones (M1–M6) are written, and I re-ran the full test
 suite this run: **53 of 53 tests pass**, including the M6 settings suite that
@@ -79,41 +86,81 @@ Three honest caveats, none of which are your homework:
 
 ## 3. Your decisions, and the one thing still open
 
-You answered three questions on POD-33 on **2026-10-04**. These are now the
+You answered four questions on POD-33 on **2026-10-04**. These are now the
 standing decisions, and the rest of this document follows them.
 
 | Decision | Your answer | Status |
 |---|---|---|
-| Email sending method | **AgentMail** (not Gmail SMTP) | Being built — see below |
+| Email sending method | **Gmail SMTP with an app password** | Code already written and tested — needs your app password |
 | Episode cadence | **You file a board task each time** | Live now, no setup needed (section 6) |
 | Next engineering step | **Commit and push M6** | Done 2026-10-04 |
+| AgentMail | **Dropped** in favour of Gmail SMTP | The AgentMail sender ticket was cancelled, unbuilt |
 
-**The one thing still open: AgentMail needs a credential before it can send.**
+AgentMail turned out not to be connectable from this board, so it would have
+meant creating an AgentMail account and API key — *more* setup than Gmail, not
+less. You switched to Gmail SMTP instead. Good call: that path is already
+built, already tested, and needs no new code.
 
-Picking AgentMail settled the conflict in your 2026-10-01 config answers
-(AgentMail address + Gmail SMTP method, which don't compose). But AgentMail is
-not currently connectable from this board — I checked, and it comes back
-unavailable — so there is no bundled inbox to switch on. To send from an
-AgentMail address the app needs its own AgentMail API key and from-address,
-read from the environment by name (`AGENTMAIL_API_KEY`, `AGENTMAIL_FROM`), the
-same way SMTP credentials would be. Nothing secret ever goes in a file, a
-ticket, or a log.
+**The one thing still open: a Google app password.** Nine minutes of your
+time, once, and delivery is on for good.
 
-So the work splits in two:
+### 3a. Turning email delivery on (your only open task)
 
-1. **Ours.** The App Engineer builds the `EMAIL_METHOD=agentmail` sender
-   behind the delivery boundary that already exists, with tests. Tracked as a
-   child ticket of POD-33. No input from you needed for this part.
-2. **Yours, when you want it.** Create an AgentMail inbox, hand over the API
-   key, and I set it as a local environment variable. The day that happens,
-   delivery turns on with a config change.
+**Step 1 — make the app password.** On the Google account you want episodes
+*sent from*:
 
-**Until then, delivery stays paused** — which is exactly where the pilot is.
+1. Go to <https://myaccount.google.com/security> and make sure **2-Step
+   Verification** is **On**. Google will not offer app passwords without it.
+2. Go to <https://myaccount.google.com/apppasswords>. Name it
+   `Podcast Foundry` and click **Create**.
+3. Google shows a **16-character password** in four blocks, e.g.
+   `abcd efgh ijkl mnop`. Copy it. It is shown once and never again — if you
+   lose it, delete that entry and make a new one. Spaces don't matter; the app
+   strips nothing, so paste it however you like as long as it's the same 16
+   characters.
+
+**Step 2 — put it where the app reads it.** Create a file called `.env` in
+`C:\Users\alfre\Desktop\_desktop\_projects\_podcast_application` (Notepad is
+fine — save as `.env`, with the quotes, so Notepad doesn't add `.txt`) with
+these three lines:
+
+```
+EMAIL_METHOD=smtp
+SMTP_USER=the-gmail-address-you-used@gmail.com
+SMTP_PASS=abcdefghijklmnop
+```
+
+That file is already in `.gitignore`, so it is never committed and never
+leaves your machine. The app reads those three names from the environment at
+startup and the password is never written to a log, a ticket, the database, or
+any screen — the Status page shows only *"SMTP credentials: configured"*.
+`SMTP_HOST` and `SMTP_PORT` default to `smtp.gmail.com:587` with STARTTLS, so
+you don't need to set them.
+
+**You never have to send me the password.** Don't paste it into the board or a
+chat message. Putting it in that file is the whole handover.
+
+**Step 3 — tell me it's there,** and I'll have the engineer send one real test
+email (the 30-second benchmark clip, not a whole episode) to confirm the login
+works before an episode depends on it. Ticket is already filed.
+
+**Which address sends?** Whichever Gmail account you make the app password on
+becomes the sender — no extra config. The three approved recipients stay
+`alfredoalea@gmail.com`, `alfredo.cursor@gmail.com`,
+`alfredoaleawork@gmail.com`; the app refuses to send anywhere outside that
+list.
+
+**Will an episode actually fit in an email?** Yes. The pilot's email-sized MP3
+(mono, 96 kbps) is **14.5 MB** — inside both the app's own 20 MB cap and
+Gmail's 25 MB limit. The cap works out to roughly **29 minutes** of audio; a
+longer episode than that is detected before sending and handed to the share
+folder with a link instead, rather than bouncing.
+
+**Until step 2 is done, delivery stays paused** — exactly where the pilot is.
 Finished episodes land in the share folder and the app shows a "collect your
-episode here" notice with the path. Nothing is lost and nothing is waiting on
-you. If you'd rather not bother with AgentMail at all, Gmail SMTP is already
-written and tested and needs only a Google app password — say so and we flip
-to that instead.
+episode here" notice with the path. Nothing is lost and nothing else is
+waiting on you. Leaving it paused forever is a legitimate choice; the rest of
+the system doesn't care.
 
 ---
 
@@ -259,9 +306,10 @@ every New Episode form after that.
 - Saved recipient lists, restricted to your approved addresses
 
 **What it deliberately does not do**
-- Send email — paused. You chose AgentMail; the sender is being built and then
-  needs an AgentMail API key (section 3). Episodes go to the share folder
-  meanwhile.
+- Send email — paused, but only for want of a credential. The Gmail SMTP
+  sender is written and tested; it switches on the moment `EMAIL_METHOD=smtp`
+  and an app password are in `.env` (section 3a). Episodes go to the share
+  folder meanwhile.
 - Write research or scripts automatically — the app expects a script; the
   agent team is what produces one
 
@@ -275,7 +323,9 @@ every New Episode form after that.
 | Mastering step fails naming `ffmpeg` or `ffprobe` | Not on PATH | Install ffmpeg and add it to PATH. Your machine has 8.0.1. |
 | A render stalls on one chunk | Chunk hit the 10-minute timeout | The app retries with a smaller chunk automatically. Watch the render page. |
 | Render was interrupted | App or machine restarted | Restart the app. It resumes from the first unfinished chunk on its own. |
-| Episode finished but no email | Delivery is paused by design | Collect it from the output folder or the share folder. Email turns on once the AgentMail credential exists (section 3). |
+| Episode finished but no email | Delivery is paused by design | Collect it from the output folder or the share folder. Email turns on the moment the Gmail app password is in `.env` (section 3a). |
+| Email fails with `SMTPAuthenticationError` | App password wrong, or 2-Step Verification was turned off | Re-create the app password at <https://myaccount.google.com/apppasswords> and update `.env`. Never use your normal Google password — Gmail rejects it for SMTP. |
+| Email fails naming `SMTP_USER / SMTP_PASS` | `EMAIL_METHOD=smtp` is set but the credential names aren't | That's the app refusing to half-work. Fill in all three lines in `.env`, or remove `EMAIL_METHOD` to go back to paused. |
 
 **Requirements, in full:** Python 3.11+, ComfyUI, and ffmpeg/ffprobe on PATH.
 No Node, no npm, no database server. You already have all three.
@@ -290,6 +340,7 @@ No Node, no npm, no database server. You already have all three.
 | Episode outputs | `...\_ComfyUI\output\podcast_foundry\<date>_<slug>\` |
 | Share folder (paused delivery) | `...\_podcast_application\_output_podcast_folder` |
 | Config (no secrets) | `...\_podcast_application\config\app_config.json` |
+| Your Gmail app password | `...\_podcast_application\.env` — you create it (section 3a), git ignores it, nothing else reads it |
 | ComfyUI workflow | `...\_podcast_application\config\comfyui_workflow.json` |
 | Voice reference clips | `...\_ComfyUI\input\voice_a.wav`, `voice_b.wav` |
 | App docs | `README.md` (feature detail), `HANDOFF.md` (move to another machine) |
