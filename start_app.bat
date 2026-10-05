@@ -14,9 +14,19 @@ REM   SMTP_USER, SMTP_PASS, PATH_TO_WORKFLOW_JSON,
 REM   RENDER_SECONDS_PER_AUDIO_SECOND, CHUNK_SECONDS_TARGET_DEFAULT
 cd /d "%~dp0"
 
-if not exist .venv (
-  echo [start_app] Creating virtual environment...
-  python -m venv .venv
+REM Pick the venv by its activate script, not by the folder name. A .venv
+REM created under WSL/Linux has bin\, not Scripts\ — and this tree has one.
+REM The old `if not exist .venv` guard passed on it, so creation was skipped,
+REM activate.bat failed with a path error, and pip/python then ran against
+REM the global interpreter instead. Keep the Linux venv intact, use its own.
+set VENV_DIR=.venv
+if not exist "%VENV_DIR%\Scripts\activate.bat" (
+  if exist "%VENV_DIR%" set VENV_DIR=.venv-win
+)
+
+if not exist "%VENV_DIR%\Scripts\activate.bat" (
+  echo [start_app] Creating virtual environment in %VENV_DIR% ...
+  python -m venv "%VENV_DIR%"
   if errorlevel 1 (
     echo [start_app] ERROR: python not found or venv creation failed.
     echo [start_app] Install Python 3.11+ from https://www.python.org/downloads/
@@ -24,7 +34,12 @@ if not exist .venv (
   )
 )
 
-call .venv\Scripts\activate.bat
+call "%VENV_DIR%\Scripts\activate.bat"
+if errorlevel 1 (
+  echo [start_app] ERROR: could not activate %VENV_DIR%.
+  echo [start_app] Delete that folder and re-run this script.
+  exit /b 1
+)
 python -m pip install --upgrade pip >nul
 pip install -r requirements.txt
 

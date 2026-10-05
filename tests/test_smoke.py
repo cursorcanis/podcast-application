@@ -17,6 +17,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app as app_module
+from app.config import config
 
 
 def test_status_screen_renders_defaults():
@@ -41,7 +42,12 @@ def test_api_status_shape():
     assert resp.status_code == 200
     body = resp.json()
     assert "caps" in body and "budget" in body and "email" in body and "comfyui" in body
-    assert body["email"]["paused"] is True  # EMAIL_METHOD unset -> paused (POD-7)
+    # The pause flag mirrors EMAIL_METHOD and nothing else. This used to assert
+    # `is True` outright, which was only true while POD-7 was unresolved; the
+    # Board set EMAIL_METHOD=smtp on 2026-10-05, so pin the invariant instead
+    # of the ambient value — otherwise the test fails the moment delivery is
+    # legitimately switched on.
+    assert body["email"]["paused"] is (not bool(config.email_method))
     assert body["budget"]["free_only"] is True  # MONTHLY_BUDGET $0
     # Whole-dollar budget not shown as a float canvas of $0.0.
     assert body["caps"]["max_render_hours"] == 3.0

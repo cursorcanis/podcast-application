@@ -84,14 +84,14 @@ Three honest caveats, none of which are your homework:
 
 ---
 
-## 3. Your decisions, and the one thing still open
+## 3. Your decisions — all four closed
 
 You answered four questions on POD-33 on **2026-10-04**. These are now the
 standing decisions, and the rest of this document follows them.
 
 | Decision | Your answer | Status |
 |---|---|---|
-| Email sending method | **Gmail SMTP with an app password** | Code already written and tested — needs your app password |
+| Email sending method | **Gmail SMTP with an app password** | **Live.** Verified by a real send 2026-10-05 |
 | Episode cadence | **You file a board task each time** | Live now, no setup needed (section 6) |
 | Next engineering step | **Commit and push M6** | Done 2026-10-04 |
 | AgentMail | **Dropped** in favour of Gmail SMTP | The AgentMail sender ticket was cancelled, unbuilt |
@@ -101,10 +101,31 @@ meant creating an AgentMail account and API key — *more* setup than Gmail, not
 less. You switched to Gmail SMTP instead. Good call: that path is already
 built, already tested, and needs no new code.
 
-**The one thing still open: a Google app password.** Nine minutes of your
-time, once, and delivery is on for good.
+**Email delivery is on.** You created `.env` on **2026-10-05**; the app
+password authenticates against Gmail and a real test email with a 26-second
+audio attachment was delivered to `alfredoalea@gmail.com`. Nothing is
+outstanding from you. Section 3a is kept as the reference for how it is wired
+and what to do if it ever stops working.
 
-### 3a. Turning email delivery on (your only open task)
+### 3a. How email delivery is wired (done — reference only)
+
+**Verified on 2026-10-05, on this machine, end to end:** `.env` is read,
+`EMAIL_METHOD=smtp` unpauses delivery, the app password is accepted by
+Gmail, and a real message with an audio attachment arrived. The app's own
+`_smtp_send()` did the sending — not a side script — so the path an episode
+will take is the path that was proven.
+
+**One thing had to be fixed to get there.** This network blocks outbound port
+**587** (and 25, and 2525); only **465** connects. The app defaulted to 587
+with STARTTLS, so it would have hung until timeout and reported a vague
+network error. Delivery now defaults to **465 with implicit TLS** and picks
+the transport from the port, with tests covering both modes. Nothing for you
+to configure — `SMTP_HOST` and `SMTP_PORT` can stay unset. If you ever move
+the machine to a network where 587 is open and 465 isn't, add
+`SMTP_PORT=587` to `.env` and the STARTTLS path takes over.
+
+The three steps below are the procedure you already completed on 2026-10-05.
+They stay here in case the app password is ever revoked and has to be remade.
 
 **Step 1 — make the app password.** On the Google account you want episodes
 *sent from*:
@@ -119,9 +140,18 @@ time, once, and delivery is on for good.
    strips nothing, so paste it however you like as long as it's the same 16
    characters.
 
-**Step 2 — put it where the app reads it.** Create a file called `.env` in
+**Step 2 — put it where the app reads it.** Easiest way: **double-click
+`setup_email.bat`** in the app folder. It asks for the Gmail address and the
+app password (typing is hidden), writes the `.env` file for you, and prints
+only which names are set — never the password. Nothing else to do.
+
+To check later whether delivery is on, double-click it again; or run
+`powershell -ExecutionPolicy Bypass -File setup_email.ps1 -Check`, which
+reports the three names without changing anything.
+
+By hand instead, if you prefer: create a file called `.env` in
 `C:\Users\alfre\Desktop\_desktop\_projects\_podcast_application` (Notepad is
-fine — save as `.env`, with the quotes, so Notepad doesn't add `.txt`) with
+fine — save as `".env"`, with the quotes, so Notepad doesn't add `.txt`) with
 these three lines:
 
 ```
@@ -134,15 +164,15 @@ That file is already in `.gitignore`, so it is never committed and never
 leaves your machine. The app reads those three names from the environment at
 startup and the password is never written to a log, a ticket, the database, or
 any screen — the Status page shows only *"SMTP credentials: configured"*.
-`SMTP_HOST` and `SMTP_PORT` default to `smtp.gmail.com:587` with STARTTLS, so
-you don't need to set them.
+`SMTP_HOST` and `SMTP_PORT` default to `smtp.gmail.com:465` with implicit TLS,
+so you don't need to set them (see the port note above).
 
 **You never have to send me the password.** Don't paste it into the board or a
 chat message. Putting it in that file is the whole handover.
 
-**Step 3 — tell me it's there,** and I'll have the engineer send one real test
-email (the 30-second benchmark clip, not a whole episode) to confirm the login
-works before an episode depends on it. Ticket is already filed.
+**Step 3 — tell me it's there,** and I send one real test email (a short
+benchmark clip, not a whole episode, to one address rather than all three) to
+confirm the login works before an episode depends on it. Done 2026-10-05.
 
 **Which address sends?** Whichever Gmail account you make the app password on
 becomes the sender — no extra config. The three approved recipients stay
@@ -156,11 +186,11 @@ Gmail's 25 MB limit. The cap works out to roughly **29 minutes** of audio; a
 longer episode than that is detected before sending and handed to the share
 folder with a link instead, rather than bouncing.
 
-**Until step 2 is done, delivery stays paused** — exactly where the pilot is.
-Finished episodes land in the share folder and the app shows a "collect your
-episode here" notice with the path. Nothing is lost and nothing else is
-waiting on you. Leaving it paused forever is a legitimate choice; the rest of
-the system doesn't care.
+**To go back to paused at any time,** delete the `EMAIL_METHOD=smtp` line from
+`.env` (or delete `.env` entirely). Finished episodes then land in the share
+folder and the app shows a "collect your episode here" notice with the path,
+exactly as the pilot did. Nothing breaks and no code changes — the pause is a
+first-class state, not a failure mode.
 
 ---
 
@@ -305,11 +335,13 @@ every New Episode form after that.
 - Tone and cadence presets, offered as suggestions on New Episode
 - Saved recipient lists, restricted to your approved addresses
 
+**Email delivery** — live since 2026-10-05. On a QA pass the app emails the
+episode's MP3 to that episode's approved recipients, over Gmail SMTP on port
+465. Sends are idempotent (a QA re-run cannot re-send), restricted to the
+three approved addresses, and an episode over the 20 MB cap goes to the share
+folder instead of bouncing. Resend is manual, explicit, and logged.
+
 **What it deliberately does not do**
-- Send email — paused, but only for want of a credential. The Gmail SMTP
-  sender is written and tested; it switches on the moment `EMAIL_METHOD=smtp`
-  and an app password are in `.env` (section 3a). Episodes go to the share
-  folder meanwhile.
 - Write research or scripts automatically — the app expects a script; the
   agent team is what produces one
 
@@ -323,7 +355,8 @@ every New Episode form after that.
 | Mastering step fails naming `ffmpeg` or `ffprobe` | Not on PATH | Install ffmpeg and add it to PATH. Your machine has 8.0.1. |
 | A render stalls on one chunk | Chunk hit the 10-minute timeout | The app retries with a smaller chunk automatically. Watch the render page. |
 | Render was interrupted | App or machine restarted | Restart the app. It resumes from the first unfinished chunk on its own. |
-| Episode finished but no email | Delivery is paused by design | Collect it from the output folder or the share folder. Email turns on the moment the Gmail app password is in `.env` (section 3a). |
+| Episode finished but no email | `EMAIL_METHOD` isn't set, or the episode is over the 20 MB cap | Collect it from the share folder. Check `.env` still has all three lines (section 3a); the Status screen shows whether delivery is paused. |
+| Email hangs, then fails with a timeout | Something is sending on port 587, which this network blocks | Remove any `SMTP_PORT` line from `.env` so it falls back to the 465 default. |
 | Email fails with `SMTPAuthenticationError` | App password wrong, or 2-Step Verification was turned off | Re-create the app password at <https://myaccount.google.com/apppasswords> and update `.env`. Never use your normal Google password — Gmail rejects it for SMTP. |
 | Email fails naming `SMTP_USER / SMTP_PASS` | `EMAIL_METHOD=smtp` is set but the credential names aren't | That's the app refusing to half-work. Fill in all three lines in `.env`, or remove `EMAIL_METHOD` to go back to paused. |
 

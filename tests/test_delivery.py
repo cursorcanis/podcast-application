@@ -249,6 +249,84 @@ def test_resend_refuses_double_send_after_sent_record(client, monkeypatch):
     assert "already delivered" in str(exc.value)
 
 
+class _FakeServer:
+    """Records what the SMTP path did without opening a socket."""
+
+    def __init__(self, host, port, timeout=None):
+        self.host, self.port = host, port
+        self.calls: list[str] = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def starttls(self):
+        self.calls.append("starttls")
+
+    def login(self, user, password):
+        self.calls.append("login")
+
+    def send_message(self, msg):
+        self.calls.append("send_message")
+        return {}
+
+
+def _patch_smtp(monkeypatch):
+    """Replace both smtplib entry points; return the list each one records
+    into so a test can assert which transport was chosen."""
+    made: list[_FakeServer] = []
+
+    def factory(kind):
+        def build(host, port, timeout=None):
+            srv = _FakeServer(host, port, timeout)
+            srv.calls.append(kind)
+            made.append(srv)
+            return srv
+
+        return build
+
+    monkeypatch.setattr(delivery.smtplib, "SMTP", factory("SMTP"))
+    monkeypatch.setattr(delivery.smtplib, "SMTP_SSL", factory("SMTP_SSL"))
+    return made
+
+
+def test_smtp_port_465_uses_implicit_tls_and_never_starttls(client, monkeypatch):
+    """465 speaks TLS from the first byte. Calling STARTTLS on it hangs until
+    timeout instead of failing clearly, so the transport must be SMTP_SSL and
+    STARTTLS must not be attempted. 465 is also the default port, because
+    outbound 587 is blocked on the Board's network."""
+    episode_id = _render_and_qa_pass(client, monkeypatch)
+    monkeypatch.setitem(config.values, "EMAIL_METHOD", "smtp")
+    monkeypatch.setenv("SMTP_USER", "sender@example.com")
+    monkeypatch.setenv("SMTP_PASS", "app-password")
+    made = _patch_smtp(monkeypatch)
+
+    result = delivery.resend(episode_id)
+
+    assert result["sent"] is True
+    assert len(made) == 1
+    assert made[0].calls == ["SMTP_SSL", "login", "send_message"]
+    assert made[0].port == 465  # the default, with SMTP_PORT unset
+
+
+def test_smtp_port_587_still_negotiates_starttls(client, monkeypatch):
+    """The STARTTLS path stays intact for a network where 587 is open."""
+    episode_id = _render_and_qa_pass(client, monkeypatch)
+    monkeypatch.setitem(config.values, "EMAIL_METHOD", "smtp")
+    monkeypatch.setenv("SMTP_USER", "sender@example.com")
+    monkeypatch.setenv("SMTP_PASS", "app-password")
+    monkeypatch.setenv("SMTP_PORT", "587")
+    made = _patch_smtp(monkeypatch)
+
+    result = delivery.resend(episode_id)
+
+    assert result["sent"] is True
+    assert made[0].calls == ["SMTP", "starttls", "login", "send_message"]
+    assert made[0].port == 587
+
+
 def test_resend_refuses_unapproved_recipient(client, monkeypatch):
     episode_id = _render_and_qa_pass(client, monkeypatch)
     # Inject an unapproved recipient into the episode record directly.

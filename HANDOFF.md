@@ -110,7 +110,9 @@ before any code was written**; there is no `agentmail` branch in
 No new code is required for the chosen path. Activation is configuration only:
 `EMAIL_METHOD=smtp` plus `SMTP_USER` / `SMTP_PASS` in the environment or a
 local `.env`, with `SMTP_HOST` / `SMTP_PORT` defaulting to
-`smtp.gmail.com:587` (STARTTLS) and `SENDER_ADDRESS` falling back to
+`smtp.gmail.com:465` (implicit TLS; 587/STARTTLS is still supported and
+selected by setting the port, but outbound 587 is blocked on the Board's
+network) and `SENDER_ADDRESS` falling back to
 `SMTP_USER`. Delivery stays paused until the Board puts the app password in
 `.env` on the Windows host; that is a Board action, not an engineering one.
 The documented end-user procedure lives in `START_HERE.md` section 3a. Do not

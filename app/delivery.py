@@ -227,7 +227,7 @@ def _smtp_send(episode: dict, recipients: list[str], *, subject: str, body: str)
     import os
 
     host = os.environ.get("SMTP_HOST") or "smtp.gmail.com"
-    port = int(os.environ.get("SMTP_PORT") or 587)
+    port = int(os.environ.get("SMTP_PORT") or 465)
     user = os.environ.get("SMTP_USER")
     password = os.environ.get("SMTP_PASS")
     sender = config.values.get("SENDER_ADDRESS") or user
@@ -253,11 +253,22 @@ def _smtp_send(episode: dict, recipients: list[str], *, subject: str, body: str)
     filename = Path(mp3).name
     msg.add_attachment(data, maintype="audio", subtype="mpeg", filename=filename)
 
+    # Two TLS modes, picked by port rather than guessed: 465 speaks TLS from
+    # the first byte (implicit/SMTPS), 587 negotiates it with STARTTLS. Using
+    # the wrong one hangs until timeout rather than failing clearly, so this
+    # is explicit. 465 is the default because outbound 587 is blocked on the
+    # Board's network (verified 2026-10-05: 25/587/2525 all time out, 465
+    # connects) — a network we cannot change from here.
     try:
-        with smtplib.SMTP(host, port, timeout=60) as server:
-            server.starttls()
-            server.login(user, password)
-            result = server.send_message(msg)
+        if port == 465:
+            with smtplib.SMTP_SSL(host, port, timeout=60) as server:
+                server.login(user, password)
+                result = server.send_message(msg)
+        else:
+            with smtplib.SMTP(host, port, timeout=60) as server:
+                server.starttls()
+                server.login(user, password)
+                result = server.send_message(msg)
     except (OSError, smtplib.SMTPException) as exc:
         raise DeliveryError(f"SMTP send failed: {type(exc).__name__}: {exc}") from exc
 
