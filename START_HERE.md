@@ -61,23 +61,29 @@ handoff, so I copied them across on 2026-10-04 — the share folder is where
 every future episode will appear while delivery is paused, and it was empty
 until now. Originals are untouched.
 
-**The app: code-complete, test-green, but not yet proven as a one-click
-program.** All six milestones (M1–M6) are written, and I re-ran the full test
-suite this run: **53 of 53 tests pass**, including the M6 settings suite that
-the previous handoff note said had never been test-run. That closes the one
-item that was gating M6.
+**The app: code-complete, test-green, delivery live, and now under test as a
+one-click program.** All six milestones (M1–M6) are written and committed, and
+the full suite passes — **55 of 55 tests** as of commit `0baa6c5`.
 
 Three honest caveats, none of which are your homework:
 
-1. **No episode has ever been made through the app end to end.** I opened its
-   database: zero episodes. The pilot was made by scripts the Audio Engineer
-   ran by hand. The app's render engine *has* been proven against your real,
-   live ComfyUI (a two-voice render producing real audio, plus a `kill -9`
-   crash test proving it resumes without re-rendering finished chunks) — but
-   a complete intake-to-delivery run inside the app hasn't happened yet.
-2. **`start_app.bat` has never been double-clicked on Windows.** All testing
-   happened on the Linux side of your machine. The Python logic is proven;
-   the Windows launch experience is not.
+1. **No episode has yet been made through the app end to end.** I opened its
+   database: zero episodes, zero delivery records. The pilot was made by
+   scripts the Audio Engineer ran by hand. The app's render engine *has* been
+   proven against your real, live ComfyUI (a two-voice render producing real
+   audio, plus a `kill -9` crash test proving it resumes without re-rendering
+   finished chunks), and the email path is proven with a real send — but a
+   complete intake-to-delivery run inside the app hasn't happened yet.
+   **Filed 2026-10-05 as POD-35**, assigned to the App Engineer: one short
+   3–4 minute throwaway episode driven entirely through the app's own screens,
+   intake → source gate → script → render → mastering → QA → your inbox.
+   Finding bugs there counts as success, not failure.
+2. **`start_app.bat` has never been run on Windows.** All testing happened on
+   the Linux side of your machine. The Python logic is proven; the Windows
+   launch is not. It had a real bug — it guarded on `if not exist .venv` and
+   this folder has a Linux-built `.venv`, so it skipped creating a Windows one
+   and then ran against your global Python. Fixed by inspection on
+   2026-10-05, not yet verified by running it. POD-35 covers the verification.
 3. ~~M6's code isn't committed to git yet.~~ **Resolved 2026-10-04** — M6 is
    now committed and pushed to `github.com/cursorcanis/podcast-application`.
    All six milestones are in the repo and the working folder is clean.
