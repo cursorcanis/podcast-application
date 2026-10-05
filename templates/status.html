@@ -5,9 +5,15 @@
 <div class="banner budget">
   MONTHLY BUDGET ${{ settings.monthly_budget }} — free/open resources only, no paid services.
 </div>
+{% if settings.email_paused %}
 <div class="banner email-paused">
   EMAIL DELIVERY PAUSED — Board decision (see POD-7). No send path is active; episodes hand off via SHARE_LOCATION.
 </div>
+{% else %}
+<div class="banner ok">
+  EMAIL DELIVERY LIVE — sending via {{ settings.email_method }}. SMTP credentials: {{ 'configured' if settings_dict.smtp_env_names_configured else 'NOT configured' }}.
+</div>
+{% endif %}
 
 <section class="card comfyui">
   <h2>ComfyUI — connectivity</h2>

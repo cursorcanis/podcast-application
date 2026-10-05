@@ -170,6 +170,10 @@
     <p><span class="status-pill ok">SENT</span> at {{ delivery.record.attempted_at }}
        (provider id {{ delivery.record.provider_message_id }}) to
        {{ delivery.record.recipients_sent_to | join(", ") }}</p>
+    <div class="banner ok">
+      A copy was also handed off to the share folder:<br>
+      <code>{{ delivery.share_location }}</code>
+    </div>
     <p class="meta">Resend is disabled after a successful send to avoid a double-send.</p>
     <button disabled>Resend email</button>
     {% else %}

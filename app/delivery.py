@@ -243,6 +243,13 @@ def _smtp_send(episode: dict, recipients: list[str], *, subject: str, body: str)
     if not mp3 or not Path(mp3).exists():
         raise DeliveryError(f"Email MP3 is missing: {mp3}. Export must complete before sending.")
 
+    size_mb = Path(mp3).stat().st_size / (1024 * 1024)
+    if size_mb > config.max_attachment_mb:
+        raise DeliveryError(
+            f"Email MP3 {mp3} is {size_mb:.1f}MB, over the MAX_ATTACHMENT_MB={config.max_attachment_mb} cap. "
+            "Not sending — re-export at a lower bitrate or shorten the episode."
+        )
+
     msg = EmailMessage()
     msg["Subject"] = subject
     msg["From"] = sender
@@ -351,10 +358,19 @@ def resend(episode_id: int) -> dict[str, Any]:
     finally:
         conn.close()
 
+    # The share-folder handoff is not a fallback for a paused email — the
+    # Board wants both: a local archive copy in SHARE_LOCATION alongside
+    # every real send, not just while EMAIL_METHOD is unset. Runs after the
+    # send and its delivery_records row are already committed, so a copy
+    # failure here is reported specifically without putting an email that
+    # genuinely sent into a false 'failed' state.
+    share_path = copy_to_share_location(episode)
+
     return {
         "episode_id": episode_id,
         "status": "sent",
         "sent": True,
         "provider_message_id": provider_id,
         "recipients": recipients,
+        "share_path": share_path,
     }

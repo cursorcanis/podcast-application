@@ -346,3 +346,43 @@ def test_resend_refuses_unapproved_recipient(client, monkeypatch):
     with pytest.raises(delivery.DeliveryError) as exc:
         delivery.resend(episode_id)
     assert "intruder@example.com" in str(exc.value)
+
+
+def test_oversized_attachment_fails_loud_without_sending(client, monkeypatch):
+    """MAX_ATTACHMENT_MB is shown on the Status screen as a hard cap but was
+    never actually enforced before a send — found during POD-35's real
+    end-to-end run (episode 1's mastered MP3 was small enough to pass
+    trivially, which is exactly why this path had never been exercised).
+    Forcing the cap below the real file's size proves delivery now refuses
+    to send an oversized attachment instead of silently mailing it."""
+    episode_id = _render_and_qa_pass(client, monkeypatch)
+    monkeypatch.setitem(config.values, "EMAIL_METHOD", "smtp")
+    monkeypatch.setenv("SMTP_USER", "sender@example.com")
+    monkeypatch.setenv("SMTP_PASS", "app-password")
+    monkeypatch.setitem(config.values, "MAX_ATTACHMENT_MB", 0)
+    made = _patch_smtp(monkeypatch)
+
+    with pytest.raises(delivery.DeliveryError) as exc:
+        delivery.resend(episode_id)
+    assert "MAX_ATTACHMENT_MB" in str(exc.value)
+    assert made == []  # refused before any SMTP connection was opened
+
+
+def test_active_send_also_copies_to_share_location(client, monkeypatch):
+    """The share-folder handoff was only wired into the paused branch —
+    found during POD-35's real end-to-end run, where _output_podcast_folder
+    stayed empty after a real send. The Board wants both every time, not
+    one as a fallback for the other, so an active send must still land a
+    copy in SHARE_LOCATION."""
+    episode_id = _render_and_qa_pass(client, monkeypatch)
+    monkeypatch.setitem(config.values, "EMAIL_METHOD", "smtp")
+    monkeypatch.setenv("SMTP_USER", "sender@example.com")
+    monkeypatch.setenv("SMTP_PASS", "app-password")
+    _patch_smtp(monkeypatch)
+
+    result = delivery.resend(episode_id)
+
+    assert result["sent"] is True
+    share_path = pathlib.Path(result["share_path"])
+    assert share_path.exists()
+    assert share_path.parent == pathlib.Path(config.share_location)

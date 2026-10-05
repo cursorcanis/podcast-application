@@ -27,7 +27,13 @@ def test_status_screen_renders_defaults():
     html = resp.text
     assert "Podcast Foundry" in html
     assert "MONTHLY BUDGET $0" in html  # whole-dollar, not $0.0
-    assert "EMAIL DELIVERY PAUSED" in html
+    # The banner mirrors EMAIL_METHOD and nothing else (same invariant as
+    # test_api_status_shape below) — it used to assert the PAUSED text
+    # outright, which was only true while POD-7 was unresolved.
+    if config.email_paused:
+        assert "EMAIL DELIVERY PAUSED" in html
+    else:
+        assert "EMAIL DELIVERY LIVE" in html
     assert "MAX_RENDER_HOURS" in html
     assert "CHUNK_TIMEOUT_MIN" in html
     assert "MAX_ATTACHMENT_MB" in html

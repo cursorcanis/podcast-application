@@ -52,6 +52,7 @@ Run:  uvicorn app:app --reload        (or start_app.bat / run.bat on Windows)
 """
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -69,7 +70,35 @@ from .routes_render import router as render_router
 from .routes_settings import router as settings_router
 from .web import templates
 
-app = FastAPI(title="Podcast Foundry", version="0.6.0-m6")
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    """Ensure the SQLite state file exists (repo/data/, gitignored) so the
+    Status screen's DB-backed checks never crash a fresh checkout, and
+    resume any render_job left `running` when the process last stopped
+    (crash, reboot, or a plain restart) — resumability over speed.
+
+    Deferred to the ASGI lifespan rather than run as bare module-level
+    code: importing the `app` package (every pytest file does this) used to
+    run both calls immediately, against the real default DB_PATH, before a
+    test's own monkeypatch of db.DB_PATH/get_connection could apply. Found
+    live during POD-35's end-to-end run: with a real render job `running` in
+    the production DB, running the test suite made this module-level call
+    spin up a second, untracked worker thread against that same job — on
+    the real database connection — which then picked up the test's
+    monkeypatched comfyui/render fakes mid-loop (module-level patches apply
+    process-wide) and overwrote real render_chunks rows with fake test
+    output paths and durations. TestClient's `with TestClient(app) as c`
+    context manager still fires this startup event, but only after the
+    test's monkeypatches are already in place, so it now only ever touches
+    the isolated test DB.
+    """
+    db.init_db()
+    render.resume_pending_jobs()
+    yield
+
+
+app = FastAPI(title="Podcast Foundry", version="0.6.0-m6", lifespan=_lifespan)
 app.include_router(episodes_router)
 app.include_router(render_router)
 app.include_router(postprod_router)
@@ -78,18 +107,6 @@ app.include_router(settings_router)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
-
-# Ensure the SQLite state file exists at startup (repo/data/, gitignored) so
-# the Status screen's DB-backed checks never crash a fresh checkout. Later
-# milestones (M2+) build all episode/render state on this file, and M6's
-# voice_profiles/presets/recipient_lists tables live here too (created by
-# db.SCHEMA).
-db.init_db()
-
-# Resumability over speed: any render_job left `running` when the process
-# last stopped (crash, reboot, or a plain restart) gets its worker thread
-# re-started here, picking up from the first non-succeeded chunk.
-render.resume_pending_jobs()
 
 
 def utcnow_iso() -> str:
