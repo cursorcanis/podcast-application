@@ -43,5 +43,25 @@ if errorlevel 1 (
 python -m pip install --upgrade pip >nul
 pip install -r requirements.txt
 
-echo [start_app] Starting Podcast Foundry at http://127.0.0.1:8000
-python -m uvicorn app:app --host 127.0.0.1 --port 8000
+REM Port 8000 is not guaranteed free on this machine. WSL2 republishes its own
+REM localhost listeners into the Windows loopback, so an unrelated Linux-side
+REM service holding 8000 made uvicorn die with WinError 10048 and no advice --
+REM which is exactly what happened the first time this script was run.
+REM Honour APP_PORT when set, otherwise take the first free port from 8000 up.
+set PORT=%APP_PORT%
+if not defined PORT (
+  for %%P in (8000 8001 8002 8003 8004 8005) do (
+    if not defined PORT (
+      netstat -ano | findstr /c:"127.0.0.1:%%P " | findstr /c:"LISTENING" >nul
+      if errorlevel 1 set PORT=%%P
+    )
+  )
+)
+if not defined PORT (
+  echo [start_app] ERROR: ports 8000-8005 are all in use on this machine.
+  echo [start_app] Pick one yourself:  set APP_PORT=8123 ^&^& start_app.bat
+  exit /b 1
+)
+
+echo [start_app] Starting Podcast Foundry at http://127.0.0.1:%PORT%
+python -m uvicorn app:app --host 127.0.0.1 --port %PORT%
