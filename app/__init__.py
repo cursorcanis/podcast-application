@@ -48,6 +48,10 @@ DEFAULT_RECIPIENTS). These are conveniences; the Board still makes the
 per-episode choices, and rendering is still driven by the Audio Engineer's
 VOICE_MAPPING (read-only here), never by invented linkage.
 
+Upload Script (app/script_import.py, app/autopilot.py, app/routes_upload.py)
+— the one-step path: upload a .txt/.md/.docx script and the episode drives
+itself through render, mastering, QA and delivery with no further clicks.
+
 Run:  uvicorn app:app --reload        (or start_app.bat / run.bat on Windows)
 """
 from __future__ import annotations
@@ -61,13 +65,14 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import comfyui, db, render
+from . import autopilot, comfyui, db, render
 from .config import config
 from .routes_delivery import router as delivery_router
 from .routes_episodes import router as episodes_router
 from .routes_postprod import router as postprod_router
 from .routes_render import router as render_router
 from .routes_settings import router as settings_router
+from .routes_upload import router as upload_router
 from .web import templates
 
 
@@ -95,6 +100,7 @@ async def _lifespan(app: FastAPI):
     """
     db.init_db()
     render.resume_pending_jobs()
+    autopilot.resume_autopilots()
     yield
 
 
@@ -104,6 +110,7 @@ app.include_router(render_router)
 app.include_router(postprod_router)
 app.include_router(delivery_router)
 app.include_router(settings_router)
+app.include_router(upload_router)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")

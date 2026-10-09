@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Upload Script — Podcast Foundry{% endblock %}
+{% block content %}
+
+<h2>Upload Script</h2>
+<p class="meta">
+  The one-step path. Choose your script file and press <strong>Make the podcast</strong> —
+  the app renders the voice in ComfyUI, masters it, checks it, and
+  {% if email_paused %}puts the finished MP3 in the share folder{% else %}emails it to you{% endif %}
+  with no further clicks. Everything runs locally for free (ComfyUI + Chatterbox + ffmpeg).
+</p>
+
+{% if error %}<div class="banner error">{{ error }}</div>{% endif %}
+{% if active_job %}
+<div class="banner warn">
+  Episode {{ active_job.episode_id }} is rendering right now. Your upload will queue and start
+  automatically when it finishes.
+</div>
+{% endif %}
+
+<form method="post" action="/upload" enctype="multipart/form-data" class="card form">
+  <label>Script file ({{ extensions }})
+    <input type="file" name="script_file" accept=".txt,.md,.markdown,.docx" required>
+  </label>
+  <p class="meta">
+    Plain prose works as-is — a 4,000–5,000 word script becomes roughly a 27–33 minute
+    episode and takes about 3–4 hours to render; keep ComfyUI and this app open. Optional tags: <code>[HOST_A]</code> / <code>[HOST_B]</code> to switch voices,
+    <code>[PAUSE:2s]</code> for a timed pause. Markdown headings become a short pause, and
+    stage directions in square brackets (e.g. <code>[MUSIC IN]</code>) are not read aloud.
+  </p>
+
+  <label>Episode title (optional — defaults to the file name)
+    <input type="text" name="title">
+  </label>
+
+  <div class="grid-2">
+    <label>Narrator voice (for untagged text)
+      <select name="narrator">
+        {% for tag in narrators %}
+        <option value="{{ tag }}">{{ tag }} ({{ voice_mapping[tag] }})</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Speed ({{ min_speed }}x – {{ max_speed }}x)
+      <input type="number" name="speed" min="{{ min_speed }}" max="{{ max_speed }}" step="0.05" value="1.0">
+    </label>
+  </div>
+
+  <fieldset>
+    <legend>Send to</legend>
+    {% if email_paused %}
+    <p class="meta">Email delivery is off, so the finished episode goes to <code>{{ share_location }}</code>.</p>
+    {% endif %}
+    {% for email in allowed_recipients %}
+    <label class="inline checkbox">
+      <input type="checkbox" name="recipient_emails" value="{{ email }}"
+        {% if email == default_recipients[0] %}checked{% endif %}>
+      {{ email }}
+    </label>
+    {% endfor %}
+  </fieldset>
+
+  <button type="submit">Make the podcast</button>
+</form>
+
+{% endblock %}

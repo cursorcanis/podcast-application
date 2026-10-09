@@ -46,12 +46,19 @@ from .db import get_connection
 
 CLIP_PEAK_DB_THRESHOLD = -0.5   # astats "Peak level dB" at/above this is at-ceiling
 CLIP_FLAT_FACTOR_THRESHOLD = 0.5  # astats "Flat factor" above this indicates a flattened (clipped) waveform
+# Chatterbox peak-normalises its output to about -0.09 dBFS, so a few samples
+# sitting at that ceiling is normal, not clipping (mastering's -1.5 dBTP
+# limiter handles them). Only a chunk with a real run of flattened peaks —
+# more than this fraction of its samples at the ceiling — is flagged.
+CLIP_PEAK_SAMPLE_FRACTION = 1e-4
 MAX_SILENCE_GAP_SECONDS = 3.0
 SILENCE_NOISE_FLOOR_DB = "-50dB"
 SILENCE_MIN_DURATION_S = 0.5
 
 _PEAK_RE = re.compile(r"Peak level dB:\s*(-?inf|-?[\d.]+)")
 _FLAT_RE = re.compile(r"Flat factor:\s*(-?inf|-?[\d.]+)")
+_PEAK_COUNT_RE = re.compile(r"Peak count:\s*([\d.]+)")
+_SAMPLES_RE = re.compile(r"Number of samples:\s*([\d.]+)")
 _SILENCE_START_RE = re.compile(r"silence_start:\s*([\d.]+)")
 _SILENCE_DURATION_RE = re.compile(r"silence_duration:\s*([\d.]+)")
 
@@ -81,8 +88,14 @@ def _check_chunk_clipping(path: str) -> tuple[bool, str]:
     flat_factor = _parse_last_float(_FLAT_RE, stderr)
     if peak_db is None or flat_factor is None:
         return False, "astats produced no Peak level / Flat factor reading"
+    peak_count = _parse_last_float(_PEAK_COUNT_RE, stderr)
+    samples = _parse_last_float(_SAMPLES_RE, stderr)
     clipped = peak_db >= CLIP_PEAK_DB_THRESHOLD and flat_factor >= CLIP_FLAT_FACTOR_THRESHOLD
     detail = f"Peak level {peak_db:.2f} dB, flat factor {flat_factor:.2f}"
+    if clipped and peak_count is not None and samples:
+        fraction = peak_count / samples
+        clipped = fraction > CLIP_PEAK_SAMPLE_FRACTION
+        detail += f", {int(peak_count)} of {int(samples)} samples at peak"
     return clipped, detail
 
 

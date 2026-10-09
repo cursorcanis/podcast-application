@@ -40,6 +40,8 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(render, "get_connection", fake_get_connection)
     db.init_db(db_path)
     monkeypatch.setattr(render, "_start_thread", lambda job_id: None)
+    # Fake chunks here are deliberately longer than Chatterbox's 34s ceiling.
+    monkeypatch.setattr(workflow, "max_audio_seconds", lambda wf, roles: None)
     with TestClient(app_module.app) as c:
         yield c
 

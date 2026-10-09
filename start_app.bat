@@ -64,4 +64,7 @@ if not defined PORT (
 )
 
 echo [start_app] Starting Podcast Foundry at http://127.0.0.1:%PORT%
+echo [start_app] Upload a script at http://127.0.0.1:%PORT%/upload
+REM Open the Upload page once the server has had a moment to start.
+start "" /b powershell -NoProfile -Command "Start-Sleep 4; Start-Process 'http://127.0.0.1:%PORT%/upload'"
 python -m uvicorn app:app --host 127.0.0.1 --port %PORT%

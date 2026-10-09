@@ -348,6 +348,7 @@ def requeue_chunks_for_rerender(job_id: int, chunk_ids: list[int]) -> None:
             raise RenderError(f"Chunk id(s) {sorted(missing)} do not belong to render job {job_id}.")
         conn.execute(
             f"UPDATE render_chunks SET status = 'pending', attempt_count = 0, error_detail = NULL, "
+            f"rerender_count = rerender_count + 1, "
             f"output_wav_path = NULL, measured_render_seconds = NULL, qa_clip_detected = 0, "
             f"comfyui_prompt_id = NULL WHERE id IN ({','.join('?' for _ in chunk_ids)})",
             tuple(chunk_ids),
@@ -365,6 +366,52 @@ def requeue_chunks_for_rerender(job_id: int, chunk_ids: list[int]) -> None:
     except sqlite3.IntegrityError as exc:
         raise AlreadyRenderingError(
             f"Another render job became active system-wide while requeueing: {exc}"
+        ) from exc
+    finally:
+        conn.close()
+    _start_thread(job_id)
+
+
+def resume_failed_job(job_id: int) -> None:
+    """Restart a job that failed part-way (ComfyUI went down, a chunk ran out
+    of attempts): its unfinished chunks get a fresh attempt budget and the
+    job resumes from the first of them. Succeeded chunks are kept — and a
+    chunk whose last ComfyUI prompt finished after the app gave up on it is
+    adopted rather than re-rendered (see _recover_prior_attempt)."""
+    conn = get_connection()
+    try:
+        job = conn.execute("SELECT * FROM render_jobs WHERE id = ?", (job_id,)).fetchone()
+        if job is None:
+            raise RenderError(f"Render job {job_id} does not exist.")
+        if job["status"] != "failed":
+            raise RenderError(f"Render job {job_id} has not failed (status is '{job['status']}').")
+        active = conn.execute(
+            "SELECT * FROM render_jobs WHERE status IN (?, ?) ORDER BY id DESC LIMIT 1",
+            _ACTIVE_JOB_STATUSES,
+        ).fetchone()
+        if active is not None:
+            raise AlreadyRenderingError(
+                f"Render job {active['id']} for episode {active['episode_id']} is already "
+                f"{active['status']} — only one render job may run system-wide at a time."
+            )
+        conn.execute(
+            "UPDATE render_chunks SET status = 'pending', attempt_count = 0 "
+            "WHERE job_id = ? AND status != 'succeeded'",
+            (job_id,),
+        )
+        conn.execute(
+            "UPDATE render_jobs SET status = 'running', finished_at = NULL, error_detail = NULL "
+            "WHERE id = ?",
+            (job_id,),
+        )
+        conn.execute(
+            "UPDATE episodes SET status = 'rendering', updated_at = ? WHERE id = ?",
+            (utcnow_iso(), job["episode_id"]),
+        )
+        conn.commit()
+    except sqlite3.IntegrityError as exc:
+        raise AlreadyRenderingError(
+            f"Another render job became active system-wide while resuming: {exc}"
         ) from exc
     finally:
         conn.close()
@@ -425,6 +472,75 @@ def _extract_output_file(outputs: dict, save_node_id: str) -> tuple[str, str] | 
 
 # --- Worker loop -----------------------------------------------------------------
 
+def _episode_speed(conn: sqlite3.Connection, episode_id: int) -> float:
+    episode = conn.execute("SELECT speed FROM episodes WHERE id = ?", (episode_id,)).fetchone()
+    return float(episode["speed"]) if episode else 1.0
+
+
+def _replace_chunk_with_pieces(
+    conn: sqlite3.Connection, job_id: int, chunk: dict, pieces: list[str], speed: float
+) -> None:
+    """Swap one chunk row for `pieces` (pending), shifting later chunks
+    along. The original chunk's pause_before/after belonged to its
+    first/last piece respectively — the new middle pieces carry no pause."""
+    conn.execute("DELETE FROM render_chunks WHERE id = ?", (chunk["id"],))
+    conn.execute(
+        "UPDATE render_chunks SET chunk_index = chunk_index + ? WHERE job_id = ? AND chunk_index > ?",
+        (len(pieces) - 1, job_id, chunk["chunk_index"]),
+    )
+    for offset, piece in enumerate(pieces):
+        conn.execute(
+            "INSERT INTO render_chunks (job_id, chunk_index, speaker, text, status, "
+            "chunk_seconds_target, pause_before_seconds, pause_after_seconds) "
+            "VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)",
+            (
+                job_id,
+                chunk["chunk_index"] + offset,
+                chunk["speaker"],
+                piece,
+                chunking.estimate_seconds(piece, speed),
+                chunk["pause_before_seconds"] if offset == 0 else 0.0,
+                chunk["pause_after_seconds"] if offset == len(pieces) - 1 else 0.0,
+            ),
+        )
+
+
+# Fraction of the TTS node's maximum output length at which a rendered chunk
+# is treated as cut off rather than finished.
+LENGTH_CEILING_FRACTION = 0.97
+
+
+def _hit_length_ceiling(output_path: str, max_audio_seconds: float | None) -> bool:
+    if not max_audio_seconds or not Path(output_path).exists():
+        return False
+    from .postprod import PostprodError, ffprobe_duration_seconds  # postprod imports render
+
+    try:
+        duration = ffprobe_duration_seconds(Path(output_path))
+    except (PostprodError, OSError, ValueError):
+        return False
+    return duration >= max_audio_seconds * LENGTH_CEILING_FRACTION
+
+
+def _recover_prior_attempt(comfyui_url: str, chunk: dict, timeout_s: float) -> dict | None:
+    """If this chunk already has a ComfyUI prompt on record, return that
+    prompt's successful result — waiting for it if ComfyUI still has it
+    queued or running — instead of submitting the text again. None means
+    there is nothing to recover and the chunk should be submitted fresh."""
+    prior = chunk.get("comfyui_prompt_id")
+    if not prior:
+        return None
+    try:
+        result = comfyui.fetch_finished_result(comfyui_url, prior)
+        if result is None and comfyui.queue_position(comfyui_url, prior) is not None:
+            result = comfyui.poll_history(comfyui_url, prior, timeout_s=timeout_s)
+    except comfyui.ComfyUIError:
+        return None
+    if result is not None and result.get("outcome") == "succeeded":
+        return result
+    return None
+
+
 def _run_job(job_id: int) -> None:
     conn = get_connection()
     try:
@@ -450,6 +566,7 @@ def _run_job(job_id: int) -> None:
 
         voice_mapping = config.voice_mapping
         chunk_timeout_s = config.chunk_timeout_min * 60.0
+        max_audio_seconds = workflow.max_audio_seconds(wf, roles)
 
         while True:
             current_job = conn.execute("SELECT status FROM render_jobs WHERE id = ?", (job_id,)).fetchone()
@@ -505,36 +622,52 @@ def _run_job(job_id: int) -> None:
                 return
 
             filename_prefix = f"{OUTPUT_PREFIX_ROOT}/ep{episode_id}_job{job_id}/chunk_{chunk['chunk_index']:04d}"
-            started_at = utcnow_iso()
-            conn.execute(
-                "UPDATE render_chunks SET status = 'submitted', attempt_count = attempt_count + 1, "
-                "started_at = ?, error_detail = NULL, voice_reference_used = ? WHERE id = ?",
-                (started_at, voice_ref, chunk["id"]),
-            )
-            conn.commit()
 
-            try:
-                prompt = workflow.build_prompt(
-                    wf,
-                    roles,
-                    text=chunk["text"],
-                    filename_prefix=filename_prefix,
-                    voice_reference_filename=voice_ref,
-                )
-                prompt_id = comfyui.submit_prompt(comfyui_url, prompt, CLIENT_ID)
+            # An earlier attempt (one that timed out, or was in flight when
+            # the app stopped) may have finished in ComfyUI after all —
+            # adopt its audio rather than render the same text again.
+            result = _recover_prior_attempt(comfyui_url, chunk, chunk_timeout_s)
+            started_at = chunk["started_at"] or utcnow_iso()
+            if result is None:
+                started_at = utcnow_iso()
                 conn.execute(
-                    "UPDATE render_chunks SET status = 'rendering', comfyui_prompt_id = ? WHERE id = ?",
-                    (prompt_id, chunk["id"]),
+                    "UPDATE render_chunks SET status = 'submitted', attempt_count = attempt_count + 1, "
+                    "started_at = ?, error_detail = NULL, voice_reference_used = ? WHERE id = ?",
+                    (started_at, voice_ref, chunk["id"]),
                 )
                 conn.commit()
-                result = comfyui.poll_history(comfyui_url, prompt_id, timeout_s=chunk_timeout_s)
-            except comfyui.ComfyUIError as exc:
+
+                try:
+                    prompt = workflow.build_prompt(
+                        wf,
+                        roles,
+                        text=chunk["text"],
+                        filename_prefix=filename_prefix,
+                        voice_reference_filename=voice_ref,
+                        # A retry or QA re-render gets a different seed — the
+                        # same seed reproduces the same flawed take exactly.
+                        seed_offset=chunk["attempt_count"] + 100 * chunk["rerender_count"],
+                    )
+                    prompt_id = comfyui.submit_prompt(comfyui_url, prompt, CLIENT_ID)
+                    conn.execute(
+                        "UPDATE render_chunks SET status = 'rendering', comfyui_prompt_id = ? WHERE id = ?",
+                        (prompt_id, chunk["id"]),
+                    )
+                    conn.commit()
+                    result = comfyui.poll_history(comfyui_url, prompt_id, timeout_s=chunk_timeout_s)
+                except comfyui.ComfyUIError as exc:
+                    conn.execute(
+                        "UPDATE render_chunks SET status = 'failed', error_detail = ? WHERE id = ?",
+                        (f"ComfyUI error: {exc}", chunk["id"]),
+                    )
+                    conn.commit()
+                    continue
+            else:
                 conn.execute(
-                    "UPDATE render_chunks SET status = 'failed', error_detail = ? WHERE id = ?",
-                    (f"ComfyUI error: {exc}", chunk["id"]),
+                    "UPDATE render_chunks SET voice_reference_used = ? WHERE id = ?",
+                    (voice_ref, chunk["id"]),
                 )
                 conn.commit()
-                continue
 
             if result["outcome"] == "succeeded":
                 output = _extract_output_file(result.get("outputs", {}), roles.save_node_id)
@@ -551,6 +684,27 @@ def _run_job(job_id: int) -> None:
                     continue
                 subfolder, filename = output
                 output_path = _resolve_output_path(subfolder, filename)
+                if _hit_length_ceiling(output_path, max_audio_seconds):
+                    # Chatterbox stopped at its max_new_tokens ceiling, so the
+                    # end of this chunk's text was never spoken (or it ran on
+                    # babbling). Halve the text and render both halves; text
+                    # too short to halve is retried with a fresh seed.
+                    pieces = chunking.split_in_half(chunk["text"])
+                    if len(pieces) > 1:
+                        _replace_chunk_with_pieces(
+                            conn, job_id, chunk, pieces, _episode_speed(conn, episode_id)
+                        )
+                    else:
+                        conn.execute(
+                            # prompt id cleared so the retry can't "recover"
+                            # this same rejected take.
+                            "UPDATE render_chunks SET status = 'failed', comfyui_prompt_id = NULL, "
+                            "error_detail = ? WHERE id = ?",
+                            (f"Audio ran to the {max_audio_seconds:.0f}s TTS length ceiling for a "
+                             "short line — retrying with a new seed.", chunk["id"]),
+                        )
+                    conn.commit()
+                    continue
                 completed_at = utcnow_iso()
                 wall_seconds = None
                 start_dt, end_dt = _parse_iso(started_at), _parse_iso(completed_at)
@@ -564,8 +718,7 @@ def _run_job(job_id: int) -> None:
                 conn.commit()
             elif result["outcome"] == "oom":
                 new_target = max(chunk["chunk_seconds_target"] / 2.0, chunking.MIN_CHUNK_SECONDS_TARGET)
-                episode = conn.execute("SELECT speed FROM episodes WHERE id = ?", (episode_id,)).fetchone()
-                speed = float(episode["speed"]) if episode else 1.0
+                speed = _episode_speed(conn, episode_id)
                 pieces = chunking.split_text_to_target(chunk["text"], speed, new_target)
                 conn.execute(
                     "UPDATE render_jobs SET chunk_seconds_target = ? WHERE id = ?",
@@ -580,30 +733,7 @@ def _run_job(job_id: int) -> None:
                          f"available: {result.get('error_detail')}", chunk["id"]),
                     )
                 else:
-                    conn.execute("DELETE FROM render_chunks WHERE id = ?", (chunk["id"],))
-                    conn.execute(
-                        "UPDATE render_chunks SET chunk_index = chunk_index + ? WHERE job_id = ? "
-                        "AND chunk_index > ?",
-                        (len(pieces) - 1, job_id, chunk["chunk_index"]),
-                    )
-                    # The original chunk's pause_before/after belonged to its
-                    # first/last piece respectively — the new middle pieces
-                    # introduced by this split carry no pause of their own.
-                    for offset, piece in enumerate(pieces):
-                        conn.execute(
-                            "INSERT INTO render_chunks (job_id, chunk_index, speaker, text, status, "
-                            "chunk_seconds_target, pause_before_seconds, pause_after_seconds) "
-                            "VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)",
-                            (
-                                job_id,
-                                chunk["chunk_index"] + offset,
-                                chunk["speaker"],
-                                piece,
-                                chunking.estimate_seconds(piece, speed),
-                                chunk["pause_before_seconds"] if offset == 0 else 0.0,
-                                chunk["pause_after_seconds"] if offset == len(pieces) - 1 else 0.0,
-                            ),
-                        )
+                    _replace_chunk_with_pieces(conn, job_id, chunk, pieces, speed)
                 conn.commit()
             else:  # failed or timed_out
                 conn.execute(

@@ -6,6 +6,25 @@ script review, ComfyUI voice rendering, ffmpeg mastering, QA, and delivery.
 This repo is being built milestone by milestone; see the table below for what
 works today.
 
+## Upload Script (autopilot) — the one-step path
+
+`/upload` takes a `.txt` / `.md` / `.docx` script (`app/script_import.py`
+cleans Markdown and stage directions, keeps `[HOST_x]` / `[PAUSE:Ns]` tags)
+and creates a `script_ready` episode flagged `autopilot`. `app/autopilot.py`
+then drives it render → mastering → QA → delivery with no clicks: uploads
+queue first-come-first-served, the render waits for ComfyUI to be reachable,
+an over-cap projection is auto-confirmed, a failed render is resumed (keeping
+finished chunks) up to twice, QA-flagged chunks are re-rendered once, and if
+QA or email still fails the audio is copied to `SHARE_LOCATION` with the
+reason shown. State lives in the DB, so app restarts resume in place.
+
+Render reliability fixes in the same change: a chunk still queued or running
+in ComfyUI at `CHUNK_TIMEOUT_MIN` is waited on (up to 3× for a running one)
+instead of abandoned; an abandoned prompt is cancelled/interrupted so retries
+don't stack behind it; and a retry first adopts the earlier prompt's audio if
+ComfyUI finished it late. The email MP3 bitrate steps down (96→40 kbps) so a
+long episode fits under `MAX_ATTACHMENT_MB`.
+
 ## Current status — M6 (presets, voice profiles, saved lists)
 
 - FastAPI + SQLite app skeleton (M1).

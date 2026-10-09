@@ -162,6 +162,7 @@ def build_prompt(
     text: str,
     filename_prefix: str,
     voice_reference_filename: str | None,
+    seed_offset: int = 0,
 ) -> dict[str, Any]:
     """A deep copy of `workflow` with this chunk's text, output filename, and
     (if the workflow has a voice-reference loader) reference clip filename
@@ -169,9 +170,27 @@ def build_prompt(
     workflow dict — the same in-memory workflow is reused for every chunk."""
     prompt = copy.deepcopy(workflow)
     prompt[roles.tts_node_id]["inputs"][roles.text_input_key] = text
+    seed = prompt[roles.tts_node_id]["inputs"].get("seed")
+    if seed_offset and isinstance(seed, int) and not isinstance(seed, bool):
+        prompt[roles.tts_node_id]["inputs"]["seed"] = seed + seed_offset
     prompt[roles.save_node_id]["inputs"][roles.save_filename_input_key] = filename_prefix
     if roles.loader_node_id is not None and voice_reference_filename is not None:
         prompt[roles.loader_node_id]["inputs"][roles.loader_filename_input_key] = (
             voice_reference_filename
         )
     return prompt
+
+
+# Chatterbox's speech decoder emits 25 tokens per second of audio, so its
+# `max_new_tokens` input is a hard ceiling on one chunk's length (850 tokens
+# = 34s). Text longer than that is silently cut off mid-sentence.
+CHATTERBOX_TOKENS_PER_SECOND = 25.0
+
+
+def max_audio_seconds(workflow: dict[str, Any], roles: WorkflowRoles) -> float | None:
+    """The longest audio one TTS call can produce, or None if the workflow
+    doesn't expose a max_new_tokens input."""
+    tokens = workflow[roles.tts_node_id].get("inputs", {}).get("max_new_tokens")
+    if isinstance(tokens, (int, float)) and not isinstance(tokens, bool) and tokens > 0:
+        return float(tokens) / CHATTERBOX_TOKENS_PER_SECOND
+    return None

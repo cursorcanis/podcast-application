@@ -11,7 +11,7 @@
     "HOST_B": "voice_b.wav"
   },
   "RENDER_SECONDS_PER_AUDIO_SECOND": 3.83,
-  "CHUNK_SECONDS_TARGET_DEFAULT": 60,
+  "CHUNK_SECONDS_TARGET_DEFAULT": 20,
   "MAX_RENDER_HOURS": 3,
   "CHUNK_TIMEOUT_MIN": 10,
   "OUTPUT_FOLDER": "C:\\Users\\alfre\\Desktop\\_desktop\\_projects\\_ComfyUI\\output\\podcast_foundry",

@@ -2,6 +2,36 @@
 
 A plain-language introduction to what you have, what state it's in, and how to run it.
 
+## The quick way (added 2026-10-09): upload a script, get a podcast
+
+No agents, no board tickets, no Claude usage — everything runs on this PC for $0
+(ComfyUI + Chatterbox for the voice, ffmpeg for mastering, Gmail for delivery).
+
+1. Start **ComfyUI** (this machine uses port 8189, set in `.env`).
+2. Double-click **`start_app.bat`**. The **Upload Script** page opens in your browser.
+3. Choose your script file (`.txt`, `.md` or `.docx`) and click **Make the podcast**.
+
+That's it. The episode page shows a live status line while the app renders the
+voice, masters it, runs QA and emails it (or copies it to the share folder).
+You can close the browser; the work continues as long as the app window is open,
+and if the app or PC restarts it picks up where it left off.
+
+- **Script format:** plain prose is fine. A 4,000–5,000 word script makes a
+  ~27–33 minute episode and takes roughly 3–4 hours to render on this PC
+  (measured 2026-10-09: ~100 s of GPU time per ~50-word chunk).
+  Optional: `[HOST_A]` / `[HOST_B]` to switch voices, `[PAUSE:2s]` for a pause.
+  Markdown headings become short pauses; `[MUSIC IN]`-style stage directions
+  are skipped, not read aloud.
+- **Several uploads** queue and render one after another in upload order.
+- **ComfyUI not running yet?** The episode waits and starts by itself once it is.
+- **Long episodes** get a lower-bitrate email copy so they still fit under the
+  20 MB attachment limit; the full-quality WAV and 192 kbps MP3 are always kept.
+- **If something stops it,** the status line says why, and a
+  **Resume autopilot** button continues without re-rendering finished parts.
+
+The older multi-step path (New Episode → sources → script → buttons) is still
+there and is described below.
+
 Written 2026-10-04 by the Chief of Podcast Operations. Every claim below was
 checked against the machine this run — files on disk, the test suite actually
 re-run, the database actually opened. Where something is unproven, it says so.

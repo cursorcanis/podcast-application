@@ -5,6 +5,13 @@
 <h2>Voice rendering — {{ episode.title }}</h2>
 <p><a href="/episodes/{{ episode.id }}">&larr; back to episode</a></p>
 
+{% if episode.autopilot %}
+<div class="banner ok">
+  Autopilot is on: when the render finishes, mastering, QA and delivery run by themselves.
+  <a href="/episodes/{{ episode.id }}">Follow it on the episode page.</a>
+</div>
+{% endif %}
+
 {% if error %}
 <div class="banner error">{{ error }}</div>
 {% endif %}

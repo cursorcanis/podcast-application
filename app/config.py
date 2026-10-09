@@ -131,7 +131,9 @@ class Config:
 
     @property
     def chunk_seconds_target_default(self) -> int:
-        return int(self.values.get("CHUNK_SECONDS_TARGET_DEFAULT", 60))
+        # 20s of estimated speech (~50 words) stays well inside Chatterbox's
+        # 34s max_new_tokens ceiling; 60s chunks were being cut off there.
+        return int(self.values.get("CHUNK_SECONDS_TARGET_DEFAULT", 20))
 
     @property
     def pilot_topic(self) -> str:

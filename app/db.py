@@ -183,6 +183,16 @@ _MIGRATIONS = (
     "ALTER TABLE episodes ADD COLUMN email_mp3_path TEXT",
     "ALTER TABLE episodes ADD COLUMN measured_duration_seconds REAL",
     "ALTER TABLE episodes ADD COLUMN qa_status TEXT",
+    # Uploaded-script autopilot (app/autopilot.py): the episode drives itself
+    # render -> mastering -> QA -> delivery with no clicks. `autopilot_note`
+    # is the human-readable "what it's doing / why it stopped" line.
+    # How many times QA sent this chunk back; varies the TTS seed so a
+    # re-render is a genuinely new take (app/render.py).
+    "ALTER TABLE render_chunks ADD COLUMN rerender_count INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE episodes ADD COLUMN autopilot INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE episodes ADD COLUMN autopilot_note TEXT",
+    "ALTER TABLE episodes ADD COLUMN autopilot_render_retries INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE episodes ADD COLUMN autopilot_qa_retries INTEGER NOT NULL DEFAULT 0",
 )
 
 
@@ -195,7 +205,11 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
                 raise
 
 
-def get_connection(db_path: Path | str = DB_PATH) -> sqlite3.Connection:
+def get_connection(db_path: Path | str | None = None) -> sqlite3.Connection:
+    # DB_PATH is read at call time, not bound as a default argument, so a
+    # test that points db.DB_PATH at a scratch file redirects every module's
+    # connections — including ones that imported get_connection by name.
+    db_path = db_path or DB_PATH
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
@@ -204,7 +218,8 @@ def get_connection(db_path: Path | str = DB_PATH) -> sqlite3.Connection:
     return conn
 
 
-def init_db(db_path: Path | str = DB_PATH) -> None:
+def init_db(db_path: Path | str | None = None) -> None:
+    db_path = db_path or DB_PATH
     conn = get_connection(db_path)
     try:
         conn.executescript(SCHEMA)
@@ -222,11 +237,12 @@ def init_db(db_path: Path | str = DB_PATH) -> None:
         conn.close()
 
 
-def health_check(db_path: Path | str = DB_PATH) -> dict:
+def health_check(db_path: Path | str | None = None) -> dict:
     """Small honest check used by the Status screen: DB writable, current
     schema version, config source file present."""
     from .config import CONFIG_PATH
 
+    db_path = db_path or DB_PATH
     try:
         init_db(db_path)
         conn = get_connection(db_path)

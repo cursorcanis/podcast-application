@@ -66,6 +66,8 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setitem(config.values, "EMAIL_METHOD", None)
     db.init_db(db_path)
     monkeypatch.setattr(render, "_start_thread", lambda job_id: None)
+    # Fake chunks here are deliberately longer than Chatterbox's 34s ceiling.
+    monkeypatch.setattr(workflow, "max_audio_seconds", lambda wf, roles: None)
     monkeypatch.setitem(config.values, "OUTPUT_FOLDER", str(tmp_path / "comfy_output"))
     with TestClient(app_module.app) as c:
         yield c

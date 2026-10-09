@@ -9,6 +9,21 @@
 <div class="banner fail">{{ error }}</div>
 {% endif %}
 
+{% if episode.autopilot or episode.autopilot_note %}
+<div class="banner {% if episode.autopilot %}warn{% elif episode.status in ('delivered', 'delivered_paused') %}ok{% else %}fail{% endif %}" id="autopilot-banner">
+  <strong>Autopilot{% if episode.autopilot %} (running){% endif %}:</strong>
+  <span id="autopilot-note">{{ episode.autopilot_note or "Starting." }}</span>
+  {% if episode.status in ('script_ready', 'rendering') %}
+  · <a href="/episodes/{{ episode.id }}/render">render progress</a>
+  {% endif %}
+  {% if not episode.autopilot and episode.status not in ('delivered', 'delivered_paused') %}
+  <form method="post" action="/episodes/{{ episode.id }}/autopilot/resume" style="margin-top:8px">
+    <button type="submit">Resume autopilot</button>
+  </form>
+  {% endif %}
+</div>
+{% endif %}
+
 <div class="card">
   <h3>Settings</h3>
   <ul>
@@ -105,7 +120,7 @@
   <p>
     <a href="/episodes/{{ episode.id }}/download/wav_master">Download WAV master</a> ·
     <a href="/episodes/{{ episode.id }}/download/archive_mp3">Download archive MP3 (192kbps stereo)</a> ·
-    <a href="/episodes/{{ episode.id }}/download/email_mp3">Download email MP3 (96kbps mono)</a>
+    <a href="/episodes/{{ episode.id }}/download/email_mp3">Download email MP3 (mono)</a>
   </p>
   {% endif %}
   <form method="post" action="/episodes/{{ episode.id }}/postprod/run">
@@ -186,4 +201,23 @@
 </div>
 {% endif %}
 
+{% endblock %}
+{% block scripts %}
+{% if episode.autopilot %}
+<script>
+// Autopilot is working in the background: refresh this page when the
+// episode's stage changes, and update the status line in between.
+(function () {
+  var startStatus = {{ episode.status | tojson }};
+  var note = document.getElementById("autopilot-note");
+  setInterval(function () {
+    fetch("/api/episodes/{{ episode.id }}/autopilot").then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d.status !== startStatus || !d.autopilot) { location.reload(); return; }
+        if (d.note && note) { note.textContent = d.note; }
+      }).catch(function () {});
+  }, 10000);
+})();
+</script>
+{% endif %}
 {% endblock %}

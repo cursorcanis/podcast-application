@@ -69,6 +69,94 @@ def submit_prompt(
     return str(prompt_id)
 
 
+def _interpret_history_entry(entry: Dict[str, Any]) -> Dict[str, Any] | None:
+    """Map one /history entry to an outcome dict, or None while it is not
+    finished yet."""
+    status = entry.get("status", {}) or {}
+    messages = status.get("messages", []) or []
+    status_str = str(status.get("status_str", "")).lower()
+    if status.get("completed") and status_str != "error":
+        return {"outcome": "succeeded", "outputs": entry.get("outputs", {}), "raw": entry}
+    if status_str == "error" or any(
+        isinstance(m, (list, tuple)) and m and str(m[0]).lower() == "execution_error"
+        for m in messages
+    ):
+        error_text = str(messages).lower()
+        is_oom = any(marker in error_text for marker in _OOM_MARKERS)
+        return {
+            "outcome": "oom" if is_oom else "failed",
+            "error_detail": str(messages),
+            "raw": entry,
+        }
+    return None
+
+
+def fetch_finished_result(url: str, prompt_id: str) -> Dict[str, Any] | None:
+    """One-shot look at /history/{prompt_id}: the outcome dict if ComfyUI
+    has finished that prompt (success or error), else None. Used before
+    re-submitting a chunk whose earlier prompt timed out or was in flight
+    when the app stopped — if ComfyUI finished it after all, its audio is
+    adopted instead of rendered a second time. Raises ComfyUIError on a
+    transport failure."""
+    history_url = f"{url.rstrip('/')}/history/{prompt_id}"
+    try:
+        with httpx.Client(timeout=HISTORY_REQUEST_TIMEOUT_S) as client:
+            resp = client.get(history_url)
+            resp.raise_for_status()
+            data = resp.json()
+    except httpx.HTTPError as exc:
+        raise ComfyUIError(f"GET {history_url} failed: {type(exc).__name__}: {exc}") from exc
+    except ValueError as exc:
+        raise ComfyUIError(f"GET {history_url} returned a non-JSON body: {exc}") from exc
+    entry = data.get(prompt_id) if isinstance(data, dict) else None
+    return _interpret_history_entry(entry) if entry is not None else None
+
+
+def queue_position(url: str, prompt_id: str) -> str | None:
+    """Where `prompt_id` sits in ComfyUI's queue: "running", "pending", or
+    None when it is in neither (finished, or unknown). Transport errors also
+    return None — this is advisory, used only to decide whether a slow
+    chunk is still genuinely being worked on."""
+    try:
+        with httpx.Client(timeout=HISTORY_REQUEST_TIMEOUT_S) as client:
+            resp = client.get(f"{url.rstrip('/')}/queue")
+            resp.raise_for_status()
+            data = resp.json()
+    except (httpx.HTTPError, ValueError):
+        return None
+    for key, label in (("queue_running", "running"), ("queue_pending", "pending")):
+        for item in data.get(key, []) or []:
+            # Queue items are [number, prompt_id, prompt, extra_data, outputs].
+            if isinstance(item, (list, tuple)) and len(item) > 1 and str(item[1]) == prompt_id:
+                return label
+    return None
+
+
+def cancel_prompt(url: str, prompt_id: str) -> None:
+    """Best-effort: remove `prompt_id` from ComfyUI's pending queue, and
+    interrupt it if it is the one currently executing — so a chunk that is
+    given up on does not keep the GPU busy and silently delay every chunk
+    submitted after it (what stalled episode 8's chunk 12: each retry queued
+    behind the previous, still-running attempt and timed out in turn)."""
+    base = url.rstrip("/")
+    try:
+        with httpx.Client(timeout=HISTORY_REQUEST_TIMEOUT_S) as client:
+            position = queue_position(url, prompt_id)
+            if position == "pending":
+                client.post(f"{base}/queue", json={"delete": [prompt_id]})
+            elif position == "running":
+                client.post(f"{base}/interrupt")
+    except httpx.HTTPError:
+        pass
+
+
+# A chunk that ComfyUI is still actively running at the CHUNK_TIMEOUT_MIN
+# deadline gets this many extra timeout-lengths before it is given up on —
+# a slow chunk is not a failed chunk. Time spent waiting in ComfyUI's queue
+# behind someone else's job never counts against the chunk at all.
+RUNNING_GRACE_MULTIPLIER = 2.0
+
+
 def poll_history(
     url: str,
     prompt_id: str,
@@ -83,11 +171,16 @@ def poll_history(
     CHUNK_TIMEOUT_MIN). Returns a dict with `outcome` in
     {"succeeded", "oom", "failed", "timed_out"}. A slow-but-still-running
     chunk is not a failed chunk — this only returns once ComfyUI itself
-    reports done/error, or the timeout is reached. Raises ComfyUIError only
-    for a transport failure talking to ComfyUI itself, never for a slow
+    reports done/error, or the timeout is reached. At the deadline the
+    queue is checked: a prompt still pending is waited on (queue time is not
+    render time), and one still running gets RUNNING_GRACE_MULTIPLIER more
+    timeouts. A prompt that is finally given up on is cancelled in ComfyUI
+    so the retry does not queue up behind it. Raises ComfyUIError only for
+    a transport failure talking to ComfyUI itself, never for a slow
     render."""
     history_url = f"{url.rstrip('/')}/history/{prompt_id}"
     deadline = now() + timeout_s
+    hard_deadline = deadline + timeout_s * RUNNING_GRACE_MULTIPLIER
     with httpx.Client(timeout=HISTORY_REQUEST_TIMEOUT_S) as client:
         while True:
             try:
@@ -101,27 +194,23 @@ def poll_history(
 
             entry = data.get(prompt_id) if isinstance(data, dict) else None
             if entry is not None:
-                status = entry.get("status", {}) or {}
-                messages = status.get("messages", []) or []
-                status_str = str(status.get("status_str", "")).lower()
-                if status.get("completed") and status_str != "error":
-                    return {"outcome": "succeeded", "outputs": entry.get("outputs", {}), "raw": entry}
-                if status_str == "error" or any(
-                    isinstance(m, (list, tuple)) and m and str(m[0]).lower() == "execution_error"
-                    for m in messages
-                ):
-                    error_text = str(messages).lower()
-                    is_oom = any(marker in error_text for marker in _OOM_MARKERS)
+                result = _interpret_history_entry(entry)
+                if result is not None:
+                    return result
+            current = now()
+            if current >= deadline:
+                position = queue_position(url, prompt_id)
+                if position == "pending":
+                    # Still waiting its turn — restart the clock.
+                    deadline = current + timeout_s
+                    hard_deadline = deadline + timeout_s * RUNNING_GRACE_MULTIPLIER
+                elif position != "running" or current >= hard_deadline:
+                    cancel_prompt(url, prompt_id)
+                    waited = timeout_s if position != "running" else timeout_s * (1 + RUNNING_GRACE_MULTIPLIER)
                     return {
-                        "outcome": "oom" if is_oom else "failed",
-                        "error_detail": str(messages),
-                        "raw": entry,
+                        "outcome": "timed_out",
+                        "error_detail": f"No completion from {history_url} after {waited:.0f}s",
                     }
-            if now() >= deadline:
-                return {
-                    "outcome": "timed_out",
-                    "error_detail": f"No completion from {history_url} after {timeout_s:.0f}s",
-                }
             sleep(poll_interval_s)
 
 # Documented fallback order, from POD-2 configuration row 1 (unchanged fact:

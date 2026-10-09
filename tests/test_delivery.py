@@ -59,6 +59,8 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(delivery, "get_connection", fake_get_connection)
     db.init_db(db_path)
     monkeypatch.setattr(render, "_start_thread", lambda job_id: None)
+    # Fake chunks here are deliberately longer than Chatterbox's 34s ceiling.
+    monkeypatch.setattr(workflow, "max_audio_seconds", lambda wf, roles: None)
     monkeypatch.setitem(config.values, "OUTPUT_FOLDER", str(tmp_path / "comfy_output"))
     # Point SHARE_LOCATION at a tmp dir so the paused-handoff copy writes
     # there instead of the Board's real Windows folder.

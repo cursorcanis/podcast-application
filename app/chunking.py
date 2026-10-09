@@ -116,6 +116,36 @@ def split_text_to_target(text: str, speed: float, max_seconds: float) -> list[st
     return pieces
 
 
+MIN_WORDS_TO_SPLIT_SENTENCE = 12
+
+
+def split_in_half(text: str) -> list[str]:
+    """Split text into two roughly equal pieces: on a sentence boundary when
+    there is more than one sentence, else at the comma (or, for a long
+    sentence, the word) nearest the middle. Returns [text] when it is too
+    short to split sensibly. Used when a rendered chunk came back cut off at
+    the TTS length ceiling — proof the length estimate was wrong, so the
+    split can't be driven by the estimate."""
+    sentences = [s for s in _SENTENCE_SPLIT_RE.split(text.strip()) if s.strip()]
+    if len(sentences) > 1:
+        total = sum(len(s.split()) for s in sentences)
+        running, cut = 0, 1
+        for i, s in enumerate(sentences[:-1], start=1):
+            running += len(s.split())
+            cut = i
+            if running >= total / 2:
+                break
+        return [" ".join(sentences[:cut]), " ".join(sentences[cut:])]
+    words = text.split()
+    if len(words) < MIN_WORDS_TO_SPLIT_SENTENCE:
+        return [text]
+    mid = len(words) // 2
+    comma_positions = [i + 1 for i, w in enumerate(words[:-1]) if w.endswith((",", ";", ":"))]
+    if comma_positions:
+        mid = min(comma_positions, key=lambda i: abs(i - len(words) / 2))
+    return [" ".join(words[:mid]), " ".join(words[mid:])]
+
+
 def chunk_script(
     script: str, *, speed: float = 1.0, chunk_seconds_target: float = 60.0
 ) -> list[ScriptChunk]:
