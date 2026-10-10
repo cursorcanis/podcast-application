@@ -350,6 +350,7 @@ def requeue_chunks_for_rerender(job_id: int, chunk_ids: list[int]) -> None:
             f"UPDATE render_chunks SET status = 'pending', attempt_count = 0, error_detail = NULL, "
             f"rerender_count = rerender_count + 1, "
             f"output_wav_path = NULL, measured_render_seconds = NULL, qa_clip_detected = 0, "
+            f"qa_silence_detected = 0, "
             f"comfyui_prompt_id = NULL WHERE id IN ({','.join('?' for _ in chunk_ids)})",
             tuple(chunk_ids),
         )

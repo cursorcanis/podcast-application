@@ -129,6 +129,8 @@ def _render_qa_report_markdown(
     voice_results: list[dict],
     voice_ok: bool,
     overall_pass: bool,
+    silent_chunks: list[dict] | None = None,
+    master_gap_cap: float = MAX_SILENCE_GAP_SECONDS,
 ) -> str:
     lines = [
         f"# QA report — {episode['title']}",
@@ -150,9 +152,18 @@ def _render_qa_report_markdown(
         lines.append("- No chunks to check.")
     lines += [
         "",
-        "## Silence gaps over 3s (final master, includes script [PAUSE] tags)",
-        f"- Max cap: {MAX_SILENCE_GAP_SECONDS:.1f}s",
+        "## Silence gaps over 3s",
+        f"- Inside any one chunk (TTS-generated, never scripted): cap {MAX_SILENCE_GAP_SECONDS:.1f}s",
     ]
+    for c in silent_chunks or []:
+        lines.append(
+            f"  - chunk {c['chunk_index']}: FAIL — {', '.join(f'{g:.1f}s' for g in c['gaps'])} "
+            f"of silence in: \"{c['text'][:90]}…\""
+        )
+    lines.append(
+        f"- Final master (includes script [PAUSE] tags): cap {master_gap_cap:.1f}s "
+        "(3s plus the longest scripted pause)"
+    )
     if silence_gaps:
         lines.append(f"- Gaps found: {', '.join(f'{g:.1f}s' for g in silence_gaps)}")
     else:
@@ -241,6 +252,7 @@ def run_qa(episode_id: int) -> dict[str, Any]:
 
     clip_results = []
     clipped_chunk_ids: list[int] = []
+    silent_chunks: list[dict] = []
     voice_mapping = config.voice_mapping
     voice_results = []
     for chunk in chunks:
@@ -251,6 +263,16 @@ def run_qa(episode_id: int) -> dict[str, Any]:
         })
         if clipped:
             clipped_chunk_ids.append(chunk["id"])
+
+        # Silence the TTS put *inside* a chunk (no [PAUSE] tag can be there —
+        # pauses only ever sit between chunks). Pinning it to the chunk is
+        # what makes it fixable: that one chunk can be re-rendered.
+        long_gaps = [g for g in _find_silence_gaps(chunk["output_wav_path"]) if g > MAX_SILENCE_GAP_SECONDS]
+        if long_gaps:
+            silent_chunks.append({
+                "id": chunk["id"], "chunk_index": chunk["chunk_index"],
+                "gaps": long_gaps, "text": chunk["text"],
+            })
 
         configured = voice_mapping.get(chunk["speaker"])
         used = chunk["voice_reference_used"]
@@ -266,8 +288,17 @@ def run_qa(episode_id: int) -> dict[str, Any]:
     ]
 
     silence_gaps = _find_silence_gaps(episode["wav_master_path"])
-    over_cap_gaps = [g for g in silence_gaps if g > MAX_SILENCE_GAP_SECONDS]
-    silence_ok = not over_cap_gaps
+    # A gap in the master may legitimately be as long as the cap plus the
+    # longest pause the script itself asked for at a chunk boundary.
+    scripted = [
+        (a["pause_after_seconds"] or 0.0) + (b["pause_before_seconds"] or 0.0)
+        for a, b in zip(chunks, chunks[1:])
+    ] + [chunks[0]["pause_before_seconds"] or 0.0 if chunks else 0.0,
+         chunks[-1]["pause_after_seconds"] or 0.0 if chunks else 0.0]
+    master_gap_cap = MAX_SILENCE_GAP_SECONDS + max(scripted, default=0.0)
+    over_cap_gaps = [g for g in silence_gaps if g > master_gap_cap]
+    silence_ok = not over_cap_gaps and not silent_chunks
+    silent_chunk_ids = [c["id"] for c in silent_chunks]
 
     overall_pass = duration_ok and clipping_ok and silence_ok and voice_ok
 
@@ -275,11 +306,14 @@ def run_qa(episode_id: int) -> dict[str, Any]:
     try:
         for chunk_id in clipped_chunk_ids:
             conn.execute("UPDATE render_chunks SET qa_clip_detected = 1 WHERE id = ?", (chunk_id,))
+        for chunk_id in silent_chunk_ids:
+            conn.execute("UPDATE render_chunks SET qa_silence_detected = 1 WHERE id = ?", (chunk_id,))
         qa_report_md = _render_qa_report_markdown(
             episode,
             duration_seconds=duration_seconds, duration_floor_seconds=duration_floor_seconds,
             duration_ok=duration_ok, clip_results=clip_results, silence_gaps=silence_gaps,
             silence_ok=silence_ok, voice_results=voice_results, voice_ok=voice_ok,
+            silent_chunks=silent_chunks, master_gap_cap=master_gap_cap,
             overall_pass=overall_pass,
         )
         _write_document(conn, episode_id, "qa_report", qa_report_md)
@@ -299,7 +333,7 @@ def run_qa(episode_id: int) -> dict[str, Any]:
     finally:
         conn.close()
 
-    failing_chunk_ids = sorted(set(clipped_chunk_ids) | set(mismatched_chunk_ids))
+    failing_chunk_ids = sorted(set(clipped_chunk_ids) | set(mismatched_chunk_ids) | set(silent_chunk_ids))
 
     delivery_result = None
     if overall_pass:
@@ -351,7 +385,8 @@ def retry_failing_chunks(episode_id: int) -> dict[str, Any]:
 
     failing_ids = [
         r["id"] for r in rows
-        if r["qa_clip_detected"] or voice_mapping.get(r["speaker"]) != r["voice_reference_used"]
+        if r["qa_clip_detected"] or r["qa_silence_detected"]
+        or voice_mapping.get(r["speaker"]) != r["voice_reference_used"]
     ]
     if not failing_ids:
         raise QAError(

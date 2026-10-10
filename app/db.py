@@ -189,6 +189,8 @@ _MIGRATIONS = (
     # How many times QA sent this chunk back; varies the TTS seed so a
     # re-render is a genuinely new take (app/render.py).
     "ALTER TABLE render_chunks ADD COLUMN rerender_count INTEGER NOT NULL DEFAULT 0",
+    # Set by QA when the TTS left an over-long silence inside this chunk.
+    "ALTER TABLE render_chunks ADD COLUMN qa_silence_detected INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE episodes ADD COLUMN autopilot INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE episodes ADD COLUMN autopilot_note TEXT",
     "ALTER TABLE episodes ADD COLUMN autopilot_render_retries INTEGER NOT NULL DEFAULT 0",

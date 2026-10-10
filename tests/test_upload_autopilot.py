@@ -383,3 +383,41 @@ def test_retry_uses_a_different_seed():
     assert first[roles.tts_node_id]["inputs"]["seed"] == base
     assert retry[roles.tts_node_id]["inputs"]["seed"] == base + 101
     assert wf[roles.tts_node_id]["inputs"]["seed"] == base  # loaded workflow untouched
+
+
+@pytest.mark.skipif(not ffmpeg_available(), reason="ffmpeg/ffprobe not on PATH")
+def test_long_silence_inside_a_chunk_is_rerendered_then_delivered(env, monkeypatch):
+    """Chatterbox sometimes leaves a >3s silence mid-chunk (episode 11, chunk 35).
+    QA must pin it to that chunk so the autopilot re-renders just that one."""
+    save_node_id = workflow.resolve_roles(workflow.load_workflow(config.path_to_workflow_json)).save_node_id
+    submits = []
+
+    def fake_submit(url, prompt, client_id):
+        submits.append(1)
+        return f"p{len(submits)}"
+
+    def fake_poll(url, prompt_id, **kw):
+        out = pathlib.Path(config.output_folder) / "sil" / f"{prompt_id}.flac"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        # First take of the first chunk: tone, 4s of silence, tone.
+        expr = (r"0.3*sin(2*PI*220*t)*lt(t\,2)+0.3*sin(2*PI*220*t)*gte(t\,6)"
+                if prompt_id == "p1" else "0.3*sin(2*PI*220*t)")
+        subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i",
+                        f"aevalsrc={expr}:duration=8:sample_rate=24000", str(out)],
+                       check=True, capture_output=True)
+        return {"outcome": "succeeded",
+                "outputs": {save_node_id: {"audio": [{"filename": out.name, "subfolder": "podcast_foundry/sil"}]}}}
+
+    monkeypatch.setattr(comfyui, "submit_prompt", fake_submit)
+    monkeypatch.setattr(comfyui, "poll_history", fake_poll)
+    monkeypatch.setattr(comfyui, "fetch_finished_result", lambda url, pid: None)
+    monkeypatch.setattr(comfyui, "queue_position", lambda url, pid: None)
+    episode_id = autopilot.create_from_upload(
+        filename="episode.md", data=LONG_SCRIPT.encode(), recipient_emails=[config.default_recipients[0]],
+    )
+    chunk_count = len(render.job_progress(render.start_render_job(episode_id)["job_id"])["chunks"])
+    _drive_to_end(episode_id)
+    ep = episodes.get_episode(episode_id)
+    assert ep["status"] == "delivered_paused", ep["autopilot_note"]
+    assert ep["autopilot_qa_retries"] == 1
+    assert len(submits) == chunk_count + 1  # only the silent chunk was rendered twice
