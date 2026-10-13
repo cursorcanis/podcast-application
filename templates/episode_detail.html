@@ -59,6 +59,12 @@
 </div>
 
 <div class="card">
+  <h3>Research</h3>
+  <p class="meta">Web search + an LM Studio-written report on the topic.</p>
+  <p><a href="/episodes/{{ episode.id }}/research">Open research</a></p>
+</div>
+
+<div class="card">
   <h3>Script Review</h3>
   {% if episode.status == 'sources_pending_approval' %}
   <p class="meta">Locked until the source gate closes.</p>

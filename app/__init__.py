@@ -70,6 +70,7 @@ from .config import config
 from .routes_delivery import router as delivery_router
 from .routes_episodes import router as episodes_router
 from .routes_postprod import router as postprod_router
+from .routes_research import router as research_router
 from .routes_render import router as render_router
 from .routes_settings import router as settings_router
 from .routes_upload import router as upload_router
@@ -106,6 +107,7 @@ async def _lifespan(app: FastAPI):
 
 app = FastAPI(title="Podcast Foundry", version="0.6.0-m6", lifespan=_lifespan)
 app.include_router(episodes_router)
+app.include_router(research_router)
 app.include_router(render_router)
 app.include_router(postprod_router)
 app.include_router(delivery_router)

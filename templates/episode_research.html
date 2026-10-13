@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Research — {{ episode.title }} — Podcast Foundry{% endblock %}
+{% block content %}
+
+<h2>Research — {{ episode.title }}</h2>
+<p class="meta"><a href="/episodes/{{ episode.id }}">&larr; Episode detail</a></p>
+
+{% if error %}<div class="banner error">{{ error }}</div>{% endif %}
+{% if status.error %}<div class="banner error">Last research run failed: {{ status.error }}</div>{% endif %}
+
+<p class="meta">
+  Searches DuckDuckGo, Wikipedia and arXiv for the topic, reads the top
+  results, and has the model loaded in LM Studio ({{ lm_studio_url }}) write a
+  4,000–6,000 word report meant to be read aloud. This does not change the
+  episode's status. To voice the report, download it and give it to
+  <a href="/upload">Upload Script</a>.
+</p>
+
+{% if status.in_progress %}
+<div class="banner warn" id="research-running">
+  <span class="status-pill checking">RUNNING</span>
+  Searching and writing the report. A full report from the local model takes about
+  20–30 minutes; this page refreshes itself when the run ends.
+</div>
+{% else %}
+<form method="post" action="/episodes/{{ episode.id }}/research/run" class="card form">
+  <label>Research topic
+    <textarea name="query" rows="3">{{ episode.topic_or_query }}</textarea>
+  </label>
+  <button type="submit">{% if status.report %}Run research again{% else %}Run research{% endif %}</button>
+</form>
+{% endif %}
+
+{% if status.report %}
+<div class="card">
+  <h3>Report</h3>
+  <p class="meta">
+    {{ status.word_count }} words · written {{ status.report_created_at }} ·
+    <a href="/episodes/{{ episode.id }}/research/report.md">Download report (.md)</a>
+  </p>
+  <div class="detail">{{ status.report }}</div>
+</div>
+
+{% if status.sources %}
+<div class="card">
+  <h3>Sources ({{ status.sources|length }})</h3>
+  <ul>
+    {% for s in status.sources %}
+    <li><a href="{{ s.url }}" rel="noopener noreferrer" target="_blank">{{ s.title }}</a> <span class="meta">({{ s.source }})</span></li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+{% endif %}
+
+{% endblock %}
+{% block scripts %}
+{% if status.in_progress %}
+<script>
+(function () {
+  "use strict";
+  var url = "/api/episodes/{{ episode.id }}/research";
+  setInterval(function () {
+    fetch(url).then(function (r) { return r.json(); }).then(function (s) {
+      if (!s.in_progress) window.location.reload();
+    }).catch(function () {});
+  }, 5000);
+})();
+</script>
+{% endif %}
+{% endblock %}
