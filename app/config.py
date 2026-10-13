@@ -45,6 +45,8 @@ OVERRIDABLE_KEYS = frozenset(
         "SENDER_ADDRESS",
         "EMAIL_METHOD",
         "PATH_TO_WORKFLOW_JSON",
+        "LM_STUDIO_URL",
+        "LM_STUDIO_MODEL",
         "RENDER_SECONDS_PER_AUDIO_SECOND",
         "CHUNK_SECONDS_TARGET_DEFAULT",
     }
@@ -134,6 +136,16 @@ class Config:
         # 20s of estimated speech (~50 words) stays well inside Chatterbox's
         # 34s max_new_tokens ceiling; 60s chunks were being cut off there.
         return int(self.values.get("CHUNK_SECONDS_TARGET_DEFAULT", 20))
+
+    @property
+    def lm_studio_url(self) -> str:
+        # LM Studio's OpenAI-compatible server (M7 research reports).
+        return str(self.values.get("LM_STUDIO_URL") or "http://127.0.0.1:1234/v1").rstrip("/")
+
+    @property
+    def lm_studio_model(self) -> str:
+        # Empty = whichever model LM Studio has loaded.
+        return str(self.values.get("LM_STUDIO_MODEL") or "")
 
     @property
     def pilot_topic(self) -> str:
