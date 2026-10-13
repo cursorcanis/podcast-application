@@ -22,6 +22,7 @@ app/__init__.py).
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 from datetime import datetime, timezone
@@ -35,6 +36,19 @@ from .db import get_connection
 MAX_CHUNK_ATTEMPTS = 3
 CLIENT_ID = "podcast_foundry_app"
 OUTPUT_PREFIX_ROOT = "podcast_foundry"
+
+# POD-110: episode 8 was created with chunk_seconds_target=60 against a
+# workflow whose max_new_tokens ceiling is 850 tokens at Chatterbox's 25
+# tokens/s decode rate -- 34.0s (confirmed by re-measuring job 8's chunk
+# WAVs with ffprobe: 31 chunks, all exactly 34.000000s). Every chunk hit that
+# ceiling and was silently cut off mid-sentence; 60s is 1.76x the ceiling.
+# A chunk_seconds_target is only a *target* for sentence-boundary splitting
+# -- a single long sentence is kept whole and allowed to run over it -- so
+# the target itself must sit well clear of the hard per-call ceiling to
+# leave room for that overrun. 75% mirrors the existing 20s-of-34s default
+# (59%) with headroom to spare, while still rejecting anything in episode
+# 8's range.
+CHUNK_TARGET_SAFETY_MARGIN = 0.75
 
 _ACTIVE_JOB_STATUSES = ("running", "awaiting_cap_confirmation")
 
@@ -84,6 +98,28 @@ def plan_chunks(episode: dict, script_text: str, chunk_seconds_target: float) ->
     )
 
 
+def _assert_chunk_target_is_safe(
+    chunk_target: float, wf: dict[str, Any], roles: workflow.WorkflowRoles
+) -> None:
+    """Reject a chunk_seconds_target that leaves no safe margin below the
+    workflow's measured per-call length ceiling (see CHUNK_TARGET_SAFETY_MARGIN)
+    rather than silently accepting it and relying only on the render-time
+    halve-and-retry safety net. Never guesses a ceiling: a workflow that
+    doesn't expose max_new_tokens skips this check entirely."""
+    ceiling = workflow.max_audio_seconds(wf, roles)
+    if ceiling is None:
+        return
+    safe_max = ceiling * CHUNK_TARGET_SAFETY_MARGIN
+    if chunk_target > safe_max:
+        raise RenderError(
+            f"CHUNK_SECONDS_TARGET_DEFAULT is {chunk_target:.0f}s, which exceeds the safe "
+            f"maximum of {safe_max:.0f}s ({CHUNK_TARGET_SAFETY_MARGIN:.0%} of the {ceiling:.0f}s "
+            "Chatterbox max_new_tokens ceiling measured for this workflow). Lower "
+            "CHUNK_SECONDS_TARGET_DEFAULT, or raise max_new_tokens on the Board-approved "
+            "workflow at PATH_TO_WORKFLOW_JSON, before rendering."
+        )
+
+
 def projected_hours_for(chunks: list[chunking.ScriptChunk]) -> float:
     total_audio_seconds = sum(c.estimated_seconds for c in chunks)
     return round((total_audio_seconds * config.render_seconds_per_audio_second) / 3600.0, 2)
@@ -102,6 +138,12 @@ def dry_run_projection(episode_id: int) -> dict[str, Any]:
     finally:
         conn.close()
     target = config.chunk_seconds_target_default
+    try:
+        wf = workflow.load_workflow(config.path_to_workflow_json)
+        roles = workflow.resolve_roles(wf)
+    except workflow.WorkflowError as exc:
+        raise RenderError(str(exc)) from exc
+    _assert_chunk_target_is_safe(target, wf, roles)
     chunks = plan_chunks(episode, script_text, target)
     projected = projected_hours_for(chunks)
     return {
@@ -186,9 +228,14 @@ def start_render_job(episode_id: int) -> dict:
         # Fail loud before creating any job row if the workflow can't be
         # resolved — never leave a half-started job behind a bad config.
         wf = workflow.load_workflow(workflow_path)
-        workflow.resolve_roles(wf)
+        roles = workflow.resolve_roles(wf)
 
         chunk_target = config.chunk_seconds_target_default
+        # POD-110: reject a chunk target that doesn't leave safe margin below
+        # this workflow's measured length ceiling, rather than creating a job
+        # that will silently need every chunk halved-and-retried (or, before
+        # that fix existed, silently truncated).
+        _assert_chunk_target_is_safe(chunk_target, wf, roles)
         chunks = plan_chunks(episode, script_text, chunk_target)
         if not chunks:
             raise RenderError(f"Episode {episode_id}'s script produced zero chunks to render.")
@@ -311,6 +358,16 @@ def list_succeeded_chunks_for_job(job_id: int) -> list[dict]:
     return chunks
 
 
+def voice_mapping_for_job(job: dict) -> dict[str, str]:
+    """The VOICE_MAPPING a job renders under: its frozen snapshot (POD-110),
+    or — for a job whose worker never ran after that column existed — the
+    current config, the only mapping on record for it."""
+    snapshot = job.get("voice_mapping_snapshot")
+    if snapshot is None:
+        return config.voice_mapping
+    return json.loads(snapshot)
+
+
 def requeue_chunks_for_rerender(job_id: int, chunk_ids: list[int]) -> None:
     """QA found that specific chunks' own rendered audio failed a check (e.g.
     clipping) — reset exactly those chunk rows to 'pending' and resume this
@@ -350,7 +407,7 @@ def requeue_chunks_for_rerender(job_id: int, chunk_ids: list[int]) -> None:
             f"UPDATE render_chunks SET status = 'pending', attempt_count = 0, error_detail = NULL, "
             f"rerender_count = rerender_count + 1, "
             f"output_wav_path = NULL, measured_render_seconds = NULL, qa_clip_detected = 0, "
-            f"qa_silence_detected = 0, "
+            f"qa_silence_detected = 0, qa_length_detected = 0, "
             f"comfyui_prompt_id = NULL WHERE id IN ({','.join('?' for _ in chunk_ids)})",
             tuple(chunk_ids),
         )
@@ -565,7 +622,20 @@ def _run_job(job_id: int) -> None:
             conn.commit()
             return
 
-        voice_mapping = config.voice_mapping
+        # POD-110: freeze VOICE_MAPPING the first time this job's worker
+        # runs; a resume or QA re-render keeps rendering under that same
+        # snapshot, so one episode never mixes voices and QA can check every
+        # chunk against the mapping the job actually used.
+        if job["voice_mapping_snapshot"] is None:
+            voice_mapping = config.voice_mapping
+            conn.execute(
+                "UPDATE render_jobs SET voice_mapping_snapshot = ? "
+                "WHERE id = ? AND voice_mapping_snapshot IS NULL",
+                (json.dumps(voice_mapping, sort_keys=True), job_id),
+            )
+            conn.commit()
+        else:
+            voice_mapping = voice_mapping_for_job(job)
         chunk_timeout_s = config.chunk_timeout_min * 60.0
         max_audio_seconds = workflow.max_audio_seconds(wf, roles)
 

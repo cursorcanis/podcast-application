@@ -84,6 +84,11 @@ CREATE TABLE IF NOT EXISTS render_jobs (
     comfyui_url TEXT,               -- frozen at job start
     render_ratio_used REAL,         -- measured s-compute/s-audio ratio used for the projection
     error_detail TEXT,              -- set when status = failed; names the exact chunk/error
+    -- POD-110: the VOICE_MAPPING config in force the first time this job's
+    -- worker loop ran, frozen (never overwritten on resume) so QA compares
+    -- each chunk's voice_reference_used against the mapping this job
+    -- actually rendered under, not whatever VOICE_MAPPING says *now*.
+    voice_mapping_snapshot TEXT,
     started_at TEXT,
     finished_at TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -116,6 +121,11 @@ CREATE TABLE IF NOT EXISTS render_chunks (
     -- drives "re-render only the failing chunks" (app/qa.py, app/render.py
     -- requeue_chunks_for_rerender) rather than the whole episode.
     qa_clip_detected INTEGER NOT NULL DEFAULT 0,
+    -- POD-110: set by QA when this chunk's measured audio duration doesn't
+    -- track its text length (truncation) or ties an identical duration with
+    -- several other chunks in the same job (a TTS length-ceiling signature,
+    -- never natural speech).
+    qa_length_detected INTEGER NOT NULL DEFAULT 0,
     started_at TEXT,
     completed_at TEXT
 );
@@ -195,6 +205,12 @@ _MIGRATIONS = (
     "ALTER TABLE episodes ADD COLUMN autopilot_note TEXT",
     "ALTER TABLE episodes ADD COLUMN autopilot_render_retries INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE episodes ADD COLUMN autopilot_qa_retries INTEGER NOT NULL DEFAULT 0",
+    # POD-110: the renderer silently truncated chunks over ~34s with no
+    # error, and QA's speaker-voice check compared against whatever
+    # VOICE_MAPPING says *now* instead of what the job actually rendered
+    # under.
+    "ALTER TABLE render_jobs ADD COLUMN voice_mapping_snapshot TEXT",
+    "ALTER TABLE render_chunks ADD COLUMN qa_length_detected INTEGER NOT NULL DEFAULT 0",
 )
 
 

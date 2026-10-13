@@ -96,10 +96,11 @@ Paperclip ticket map (from docs; statuses as last recorded):
 3. Commit docs (`PROJECT_LOG.md`, `COLLAB.md`) and push when the user wants.
 4. Remove test episodes 7, 9, 10 and the two `autopilot-live-test-*.mp3` files from `_output_podcast_folder` (user said "safe to delete" for 9/10).
 5. Episode 8: Qwen ran mastering + QA on 2026-10-11 -> `qa_failed` (duration 986 s < 1320 s floor; expected, since its chunks were the truncated 60 s ones). Episode 11 is the real deliverable; recommend archiving/deleting ep 8 (Board call).
-6. Unverified: native-Windows `start_app.bat` path end to end (HANDOFF risk R7) — the autopilot docs claim it works but the log author has not run it.
+6. ~~Unverified: native-Windows `start_app.bat`~~ **Verified 2026-10-13** on a clean worktree of `022477c` (fresh `.venv` created, deps installed, server up in ~45 s; all main pages 200; episode create + research page OK). Not covered: a native render through ComfyUI.
 7. Voice probes for pod100 (`probe_voice_b_pod100*`, `probe_results.json`) ended with `render_failed` / `file_not_found` (ComfyUI output path mismatch under `...\_ComfyUI\output\podcast_foundry\podcast_foundry\`). Unresolved voice-clipping investigation; outcome of the clip check was `clips: false` only because no file was found, so it proves nothing.
 8. Possible follow-up for Chatterbox quality: random long internal silences (QA now catches >3 s per chunk and re-renders with a new seed).
-9. Something unloads the Qwen model in LM Studio mid-generation (see 2026-10-12 entry); a full M7 report has not yet been produced live. Find the unloader (Hermes model switching?) and re-run.
+9. Something unloaded the Qwen model mid-generation twice on 2026-10-12 (cause unknown; Hermes model switching?). The 2026-10-13 live run completed (2,917 words in 643 s, good quality), but reports run short of the 4,000–6,000 target. Possible fix: generate section by section from an outline.
+10. Uncommitted POD-109 (VOICE_MAPPING -> voice_c/voice_d) is in the working tree from an unidentified 10-13 morning session; it needs committing once the Board confirms it.
 
 ## Scratch files in repo root (untracked, not product code)
 `_e2e_driver.py`, `_e2e_script.txt` (Oct 6 end-to-end driver);
@@ -150,3 +151,11 @@ render worker + resume for episode 8); `app_console.log` (Oct 6 console);
 - **Paperclip roles recreated as Claude subagents** in `.claude/agents/`: `pf-chief-of-operations`, `pf-app-engineer`, `pf-audio-engineer`, `pf-showrunner`, `pf-research-lead`; orchestration skill `.claude/skills/pf-continue/SKILL.md` (say "continue" / `/pf-continue`); Qwen bridge `.claude/tools/ask_qwen.py` (stdlib; `--check` verified OK against port 65535). They live outside Paperclip's config, so restarting Paperclip doesn't conflict.
 - Live LM report: **not completed.** Qwen generated ~3,000 tokens of a good report at ~6 tok/s, then the model was unloaded *outside the HTTP API* (LM Studio log `ExplicitModelUnloadError` at 14:17:10; it happened on 2 attempts). Who unloads it is unknown (LM Studio UI, `lms`, or Hermes switching models). Short prompts via `ask_qwen.py` work (9 s). `REPORT_TIMEOUT_S` raised to 2700 s since a full report takes ~25 min. Model reloaded afterwards.
 - Not committed (user hasn't asked).
+
+### 2026-10-13 — Claude Code (lead), `/pf-continue` round 1
+- Committed M7 + pf-* agents as `022477c` on `feat/m7-research-pf-agents`, built in a separate worktree off `origin/main` so the uncommitted POD-109/110 edits stayed out of it. Full suite on that exact tree: **88 passed**. PR #1 opened; merge to `main` left to the user (merging without review was blocked).
+- Found uncommitted POD-109/POD-110 work from 10-13 08:21–09:14 (unknown agent; no Paperclip process running at 15:40). Tests still 88 green with it. Dispatched `pf-app-engineer` to finish POD-110 (QA length/truncation flag, VOICE_MAPPING snapshot, tests).
+- Native Windows `start_app.bat` verified from a clean clone (open item 6).
+- Live M7 report via Qwen completed: search 26 s, report 643 s, 2,917 words, no reasoning tags or URLs; spot-checked facts correct.
+- POD-110 finished (`pf-app-engineer` did most of it, then hit the user's Claude session limit; the lead reviewed and verified the rest inline). Files: `app/qa.py`, `app/render.py`, `app/db.py`, `tests/test_postprod_qa.py`, `tests/test_render.py`, `tests/test_upload_autopilot.py` (fake chunk length 6 s -> 9 s so test speech stays under the new 4.5 words/s cap). **96 passed.** Read-only check on real audio: ep 11's 100 chunks -> 0 flagged (max 3.45 w/s, median 2.58); ep 8's 29 chunks -> all flagged as a 34.000 s ceiling cluster.
+- Lesson: one Opus subagent run used up the rest of the user's session allowance. Prefer inline work or Qwen; give spawned role agents a sonnet model or a narrow brief.
