@@ -257,3 +257,125 @@ def test_qa_fails_on_clipping_never_fires_delivery(client, monkeypatch):
     assert result["overall_pass"] is False
     assert result["delivery"] is None
     assert delivery.latest_delivery_record(episode_id) is None
+
+# --- POD-110: chunk length vs. text, and the frozen voice mapping -----------------
+
+_TEN_WORDS = "This sentence has exactly ten words in it for testing."
+
+
+def _words(n_tens: int) -> str:
+    return " ".join([_TEN_WORDS] * n_tens)
+
+
+def _render_and_master(client, monkeypatch, turns: list[tuple[str, float]]) -> int:
+    """Render one chunk per (text, seconds) turn — alternating HOST_A/HOST_B
+    — as a real tone of exactly that length, then master it, so QA measures
+    real files."""
+    script = " ".join(
+        f"[{'HOST_A' if i % 2 == 0 else 'HOST_B'}] {text}" for i, (text, _) in enumerate(turns)
+    )
+    episode_id = _create_episode_to_script_ready(client, script)
+    save_node_id = _save_node_id()
+    written = {"n": 0}
+
+    def fake_submit(url, prompt, client_id):
+        written["n"] += 1
+        return f"prompt-{written['n']}"
+
+    def fake_poll(url, prompt_id, *, timeout_s, **kwargs):
+        n = written["n"]
+        filename = f"chunk_{n:02d}.flac"
+        _write_tone_wav(pathlib.Path(config.output_folder) / "ep_len" / filename, seconds=turns[n - 1][1])
+        return {
+            "outcome": "succeeded",
+            "outputs": {save_node_id: {"audio": [{"filename": filename, "subfolder": "podcast_foundry/ep_len"}]}},
+        }
+
+    monkeypatch.setattr(comfyui, "submit_prompt", fake_submit)
+    monkeypatch.setattr(comfyui, "poll_history", fake_poll)
+    job_id = render.start_render_job(episode_id)["job_id"]
+    render._run_job(job_id)
+    assert len(render.job_progress(job_id)["chunks"]) == len(turns)  # one chunk per turn
+    postprod.run_postproduction(episode_id)
+    return episode_id
+
+
+def _chunks(episode_id: int) -> list[dict]:
+    return render.job_progress(render.get_latest_job_for_episode(episode_id)["id"])["chunks"]
+
+
+def test_qa_flags_truncated_chunk_and_requeues_only_it(client, monkeypatch):
+    episode_id = _render_and_master(client, monkeypatch, [
+        (_words(4), 16.0),   # 40 words in 16s: 2.5 words/s, normal
+        (_words(4), 4.0),    # 40 words in 4s: 10 words/s, cut off
+        (_words(4), 14.0),
+    ])
+    result = qa.run_qa(episode_id)
+    assert result["overall_pass"] is False
+    assert result["length_ok"] is False
+
+    chunks = _chunks(episode_id)
+    assert [c["qa_length_detected"] for c in chunks] == [0, 1, 0]
+    assert result["failing_chunk_ids"] == [chunks[1]["id"]]
+    report = episodes.latest_episode_documents(episode_id)["qa_report"]["body"]
+    assert "audio too short for its text" in report
+
+    retry = qa.retry_failing_chunks(episode_id)
+    assert retry["requeued_chunk_ids"] == [chunks[1]["id"]]
+    after = {c["id"]: c for c in _chunks(episode_id)}
+    assert after[chunks[1]["id"]]["status"] == "pending"
+    assert after[chunks[1]["id"]]["qa_length_detected"] == 0  # cleared for the re-render
+    assert after[chunks[0]["id"]]["status"] == "succeeded"
+
+
+def test_qa_flags_identical_duration_cluster_at_the_length_ceiling(client, monkeypatch):
+    # Episode 8's signature: every long chunk exactly the same length. Each
+    # is a plausible speech rate on its own (40 words in 25s), so only the
+    # tie gives them away.
+    episode_id = _render_and_master(client, monkeypatch, [
+        (_words(4), 25.0), (_words(4), 25.0), (_words(2), 9.0), (_words(4), 25.0),
+    ])
+    result = qa.run_qa(episode_id)
+    assert result["length_ok"] is False
+
+    chunks = _chunks(episode_id)
+    assert [c["qa_length_detected"] for c in chunks] == [1, 1, 0, 1]
+    assert set(result["failing_chunk_ids"]) == {chunks[0]["id"], chunks[1]["id"], chunks[3]["id"]}
+    report = episodes.latest_episode_documents(episode_id)["qa_report"]["body"]
+    assert "one of 3 chunks all 25.000s long" in report
+
+
+def test_qa_length_check_leaves_normal_speech_alone(client, monkeypatch):
+    episode_id = _render_and_master(client, monkeypatch, [
+        (_words(4), 10.5),   # brisk: 3.8 words/s (~230 wpm), still natural
+        (_words(4), 18.0),
+        ("Yeah, right, exactly, of course.", 1.0),  # 5 words/s, but too short to judge
+        (_words(4), 18.0),   # two chunks tied at the longest is chance, not a ceiling
+        (_words(3), 13.0),
+    ])
+    result = qa.run_qa(episode_id)
+    assert result["length_ok"] is True
+    assert all(c["qa_length_detected"] == 0 for c in _chunks(episode_id))
+    assert result["failing_chunk_ids"] == []
+
+
+def test_qa_voice_check_uses_the_jobs_snapshot_not_the_current_mapping(client, monkeypatch):
+    monkeypatch.setitem(config.values, "VOICE_MAPPING", {"HOST_A": "voice_a.wav", "HOST_B": "voice_b.wav"})
+    episode_id = _render_and_master(client, monkeypatch, [(_words(4), 16.0), (_words(4), 15.0)])
+
+    # The Board re-maps the voices after this episode rendered (POD-109).
+    monkeypatch.setitem(config.values, "VOICE_MAPPING", {"HOST_A": "voice_c.wav", "HOST_B": "voice_d.wav"})
+    result = qa.run_qa(episode_id)
+    assert result["voice_ok"] is True
+    report = episodes.latest_episode_documents(episode_id)["qa_report"]["body"]
+    assert "VOICE_MAPPING snapshot this job rendered under" in report
+
+    # A job from before snapshots existed falls back to the current mapping.
+    job_id = render.get_latest_job_for_episode(episode_id)["id"]
+    conn = qa.get_connection()
+    conn.execute("UPDATE render_jobs SET voice_mapping_snapshot = NULL WHERE id = ?", (job_id,))
+    conn.commit()
+    conn.close()
+    result = qa.run_qa(episode_id)
+    assert result["voice_ok"] is False
+    assert sorted(result["failing_chunk_ids"]) == sorted(c["id"] for c in _chunks(episode_id))

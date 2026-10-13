@@ -14,6 +14,7 @@ in the test thread.
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 
 import pytest
@@ -196,3 +197,88 @@ def test_projection_over_cap_requires_explicit_confirmation_before_any_submissio
     render._run_job(job["id"])
     assert render.get_latest_job_for_episode(episode_id)["status"] == "succeeded"
     assert submitted  # now it actually ran
+
+
+# --- POD-110: chunk-target guard and frozen voice mapping -------------------------
+
+# The real ceiling lookup, captured before the fixture stubs it out.
+_real_max_audio_seconds = workflow.max_audio_seconds
+
+
+def test_chunk_target_over_safe_margin_is_rejected_before_any_job_exists(client, monkeypatch):
+    # Episode 8's setting: 60s against the real workflow's 850-token (34s) ceiling.
+    monkeypatch.setattr(workflow, "max_audio_seconds", _real_max_audio_seconds)
+    monkeypatch.setitem(config.values, "CHUNK_SECONDS_TARGET_DEFAULT", 60)
+    monkeypatch.setattr(comfyui, "submit_prompt", lambda *a, **k: pytest.fail("nothing may be submitted"))
+    episode_id = _create_episode_to_script_ready(client, "[HOST_A] Hello there. [HOST_B] Yes indeed.")
+
+    with pytest.raises(render.RenderError, match="exceeds the safe maximum of 26s"):
+        render.dry_run_projection(episode_id)
+    with pytest.raises(render.RenderError, match="CHUNK_SECONDS_TARGET_DEFAULT is 60s"):
+        render.start_render_job(episode_id)
+    assert render.get_latest_job_for_episode(episode_id) is None
+    assert episodes.get_episode(episode_id)["status"] == "script_ready"
+
+
+def test_default_chunk_target_passes_the_guard(client, monkeypatch):
+    monkeypatch.setattr(workflow, "max_audio_seconds", _real_max_audio_seconds)
+    monkeypatch.setitem(config.values, "CHUNK_SECONDS_TARGET_DEFAULT", 20)
+    episode_id = _create_episode_to_script_ready(client, "[HOST_A] Hello there. [HOST_B] Yes indeed.")
+
+    assert render.dry_run_projection(episode_id)
+    assert render.start_render_job(episode_id)["status"] == "running"
+
+
+def test_chunk_target_guard_skipped_when_workflow_has_no_max_new_tokens(client, monkeypatch):
+    # Never guess a ceiling: a workflow without max_new_tokens isn't checked.
+    real_load = workflow.load_workflow
+
+    def load_without_ceiling(path):
+        wf = real_load(path)
+        tts_id = workflow.resolve_roles(wf).tts_node_id
+        wf[tts_id]["inputs"].pop("max_new_tokens", None)
+        return wf
+
+    monkeypatch.setattr(workflow, "max_audio_seconds", _real_max_audio_seconds)
+    monkeypatch.setattr(workflow, "load_workflow", load_without_ceiling)
+    monkeypatch.setitem(config.values, "CHUNK_SECONDS_TARGET_DEFAULT", 60)
+    episode_id = _create_episode_to_script_ready(client, "[HOST_A] Hello there. [HOST_B] Yes indeed.")
+
+    assert render.start_render_job(episode_id)["status"] == "running"
+
+
+def test_voice_mapping_snapshot_written_once_and_used_on_resume(client, monkeypatch):
+    original = {"HOST_A": "voice_a.wav", "HOST_B": "voice_b.wav"}
+    monkeypatch.setitem(config.values, "VOICE_MAPPING", original)
+    episode_id = _create_episode_to_script_ready(client, "[HOST_A] First turn. [HOST_B] Second turn.")
+
+    monkeypatch.setattr(comfyui, "submit_prompt", lambda url, prompt, client_id: "prompt-x")
+    calls = {"n": 0}
+
+    def flaky_poll(url, prompt_id, *, timeout_s, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return {"outcome": "succeeded", "outputs": {_save_node_id(): {"audio": [{"filename": "c1.flac", "subfolder": "podcast_foundry/x"}]}}}
+        raise RuntimeError("simulated process crash mid chunk 2")
+
+    monkeypatch.setattr(comfyui, "poll_history", flaky_poll)
+    job_id = render.start_render_job(episode_id)["job_id"]
+    # Not frozen at job creation — only once the worker actually runs.
+    assert render.get_latest_job_for_episode(episode_id)["voice_mapping_snapshot"] is None
+    with pytest.raises(RuntimeError, match="simulated process crash"):
+        render._run_job(job_id)
+    snapshot = render.get_latest_job_for_episode(episode_id)["voice_mapping_snapshot"]
+    assert json.loads(snapshot) == original
+
+    # VOICE_MAPPING changes between the crash and the resume.
+    monkeypatch.setitem(config.values, "VOICE_MAPPING", {"HOST_A": "voice_c.wav", "HOST_B": "voice_d.wav"})
+    monkeypatch.setattr(comfyui, "poll_history", _fake_success("podcast_foundry/x", "c2.flac"))
+    render._run_job(job_id)
+
+    job = render.get_latest_job_for_episode(episode_id)
+    assert job["status"] == "succeeded"
+    assert job["voice_mapping_snapshot"] == snapshot  # never overwritten on resume
+    chunks = render.job_progress(job_id)["chunks"]
+    # The resumed chunk rendered under the job's frozen mapping, so the
+    # episode doesn't switch voices half-way through.
+    assert [c["voice_reference_used"] for c in chunks] == ["voice_a.wav", "voice_b.wav"]

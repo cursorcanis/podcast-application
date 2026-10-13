@@ -12,19 +12,24 @@ $0 — no guessed LLM/ASR integration, per the build plan's Risk R5 lens):
     `silencedetect` — this includes gaps the script's own `[PAUSE:Ns]` tags
     created; a tag asking for more than 3s fails the same as a TTS glitch,
     honestly, rather than this module silently capping it.
+  - chunk length vs. text (POD-110): each chunk's own audio duration must
+    fit its word count — audio far too short for its text, or several chunks
+    tied at the job's longest duration (the TTS length-ceiling signature),
+    means the chunk was cut off mid-sentence.
   - speaker-voice match: every chunk's `voice_reference_used` (recorded at
-    render time, app/render.py) is compared against the CURRENT
-    VOICE_MAPPING for that speaker — bookkeeping, not acoustic
-    classification, but it is what this app can actually verify; the
-    mapping itself is a Board/Audio-Engineer decision, never guessed here.
+    render time, app/render.py) is compared against the VOICE_MAPPING the
+    job froze when it started rendering (POD-110; jobs older than that
+    snapshot fall back to the current VOICE_MAPPING) — bookkeeping, not
+    acoustic classification, but it is what this app can actually verify;
+    the mapping itself is a Board/Audio-Engineer decision, never guessed here.
 
 Mispronunciation checking has no automatable proxy this app can run today
 (that would need an ASR model this project has no funded or proven path to
 run — Risk R5). The QA report says so explicitly and does NOT gate pass/fail
 on it, rather than faking a check that never happened.
 
-On failure, only the chunks that actually failed a per-chunk check (clipping
-or voice mismatch) are queued for re-render via
+On failure, only the chunks that actually failed a per-chunk check (clipping,
+in-chunk silence, length, or voice mismatch) are queued for re-render via
 render.requeue_chunks_for_rerender — never the whole episode.
 
 On pass (M5, POD-12), QA hands the episode to delivery.run_delivery_on_qa_pass,
@@ -41,7 +46,6 @@ from datetime import datetime, timezone
 from typing import Any
 
 from . import delivery, postprod, render
-from .config import config
 from .db import get_connection
 
 CLIP_PEAK_DB_THRESHOLD = -0.5   # astats "Peak level dB" at/above this is at-ceiling
@@ -54,6 +58,36 @@ CLIP_PEAK_SAMPLE_FRACTION = 1e-4
 MAX_SILENCE_GAP_SECONDS = 3.0
 SILENCE_NOISE_FLOOR_DB = "-50dB"
 SILENCE_MIN_DURATION_S = 0.5
+
+# POD-110 length checks. A chunk's own audio is measured at natural pace
+# (episode speed is applied later, in mastering), so words per second of
+# rendered audio is speed-independent.
+#
+# Truncation: chunking assumes 150 wpm (2.5 words/s). Conversational and
+# podcast speech sits around 140-190 wpm, and even brisk narrators rarely
+# hold 230 wpm (~3.8 words/s) over a whole chunk. A chunk is flagged only
+# when its audio implies more than 270 wpm (4.5 words/s, 1.8x the estimate)
+# — i.e. it is under ~56% of the estimated length — which normal speech-rate
+# variation never reaches but a TTS call that stopped early does. Leading/
+# trailing silence only makes audio longer, never shorter, so it can't cause
+# a false flag here. The opposite direction (audio far longer than the text)
+# is NOT flagged: numbers, acronyms and URLs legitimately read long.
+TRUNCATION_MAX_WORDS_PER_SECOND = 4.5
+# Below ~20 words (~8s at 150 wpm) a quick "Yeah, right, exactly." can
+# legitimately run well over 4.5 words/s, and one word more or less swings
+# the rate a lot — too noisy to judge, so short chunks are skipped.
+TRUNCATION_MIN_WORDS = 20
+# Length-ceiling signature: Chatterbox stopping at max_new_tokens produces
+# the same sample count every time (episode 8: 31 chunks, all exactly
+# 34.000s). Natural takes vary by many 40ms decode steps, so this many chunks
+# all tied — within half a decode step — at the job's LONGEST duration is a
+# ceiling, not speech. Requiring the tie to sit at the job's maximum (not
+# anywhere) keeps chance ties among mid-length chunks from flagging, and the
+# minimum duration keeps an all-short job (e.g. a run of one-word lines)
+# from tripping it.
+CEILING_CLUSTER_MIN_CHUNKS = 3
+CEILING_CLUSTER_TOLERANCE_S = 0.02
+CEILING_CLUSTER_MIN_SECONDS = 10.0
 
 _PEAK_RE = re.compile(r"Peak level dB:\s*(-?inf|-?[\d.]+)")
 _FLAT_RE = re.compile(r"Flat factor:\s*(-?inf|-?[\d.]+)")
@@ -110,6 +144,42 @@ def _find_silence_gaps(path: str) -> list[float]:
     return durations[: len(starts)]
 
 
+def _check_chunk_lengths(chunks: list[dict], durations: list[float]) -> list[dict]:
+    """Chunks whose rendered length doesn't fit their text: too short for
+    their word count (truncated), or one of a cluster tied at the job's
+    longest duration (cut off at the TTS length ceiling). Returns one entry
+    per flagged chunk, with every reason it was flagged."""
+    reasons: dict[int, list[str]] = {}
+    for i, (chunk, seconds) in enumerate(zip(chunks, durations)):
+        words = len(chunk["text"].split())
+        if words < TRUNCATION_MIN_WORDS:
+            continue
+        rate = words / seconds if seconds > 0 else float("inf")
+        if rate > TRUNCATION_MAX_WORDS_PER_SECOND:
+            reasons.setdefault(i, []).append(
+                f"{words} words in {seconds:.1f}s ({rate:.1f} words/s, cap "
+                f"{TRUNCATION_MAX_WORDS_PER_SECOND:.1f}) — audio too short for its text"
+            )
+
+    longest = max(durations, default=0.0)
+    if longest >= CEILING_CLUSTER_MIN_SECONDS:
+        tied = [i for i, s in enumerate(durations) if longest - s <= CEILING_CLUSTER_TOLERANCE_S]
+        if len(tied) >= CEILING_CLUSTER_MIN_CHUNKS:
+            for i in tied:
+                reasons.setdefault(i, []).append(
+                    f"one of {len(tied)} chunks all {longest:.3f}s long (the job's longest) — "
+                    "a TTS length-ceiling cut-off, not natural speech"
+                )
+
+    return [
+        {
+            "id": chunks[i]["id"], "chunk_index": chunks[i]["chunk_index"],
+            "seconds": durations[i], "reasons": reasons[i], "text": chunks[i]["text"],
+        }
+        for i in sorted(reasons)
+    ]
+
+
 def _write_document(conn, episode_id: int, kind: str, body: str) -> None:
     conn.execute(
         "INSERT INTO episode_documents (episode_id, kind, body, created_at) VALUES (?, ?, ?, ?)",
@@ -131,6 +201,8 @@ def _render_qa_report_markdown(
     overall_pass: bool,
     silent_chunks: list[dict] | None = None,
     master_gap_cap: float = MAX_SILENCE_GAP_SECONDS,
+    length_chunks: list[dict] | None = None,
+    voice_mapping_source: str = "current VOICE_MAPPING",
 ) -> str:
     lines = [
         f"# QA report — {episode['title']}",
@@ -171,7 +243,18 @@ def _render_qa_report_markdown(
     lines.append(f"- Result: {'OK' if silence_ok else 'FAIL — a gap exceeds the 3s cap'}")
     lines += [
         "",
-        "## Speaker-voice match (recorded render voice vs. current VOICE_MAPPING)",
+        "## Chunk length vs. text (truncation / TTS length ceiling)",
+    ]
+    for c in length_chunks or []:
+        lines.append(
+            f"- chunk {c['chunk_index']}: FAIL — {'; '.join(c['reasons'])}: \"{c['text'][:90]}…\""
+        )
+    lines.append(
+        f"- Result: {'FAIL — chunk audio cut short' if length_chunks else 'OK'}"
+    )
+    lines += [
+        "",
+        f"## Speaker-voice match (recorded render voice vs. {voice_mapping_source})",
     ]
     for r in voice_results:
         mark = "ok" if r["match"] else "FAIL"
@@ -232,6 +315,7 @@ def run_qa(episode_id: int) -> dict[str, Any]:
         ).fetchone()
         if job is None:
             raise QAError(f"Episode {episode_id} has no render job on record.")
+        job = dict(job)
         job_id = int(job["id"])
         sources = [dict(r) for r in conn.execute(
             "SELECT * FROM sources WHERE episode_id = ?", (episode_id,)
@@ -253,9 +337,18 @@ def run_qa(episode_id: int) -> dict[str, Any]:
     clip_results = []
     clipped_chunk_ids: list[int] = []
     silent_chunks: list[dict] = []
-    voice_mapping = config.voice_mapping
+    chunk_durations: list[float] = []
+    # POD-110: the mapping this job actually rendered under, not whatever
+    # VOICE_MAPPING says now; older jobs without a snapshot fall back.
+    voice_mapping = render.voice_mapping_for_job(job)
+    voice_mapping_source = (
+        "the VOICE_MAPPING snapshot this job rendered under"
+        if job["voice_mapping_snapshot"] is not None
+        else "current VOICE_MAPPING (job predates voice snapshots)"
+    )
     voice_results = []
     for chunk in chunks:
+        chunk_durations.append(postprod.ffprobe_duration_seconds(chunk["output_wav_path"]))
         clipped, detail = _check_chunk_clipping(chunk["output_wav_path"])
         clip_results.append({
             "chunk_index": chunk["chunk_index"], "speaker": chunk["speaker"],
@@ -286,6 +379,9 @@ def run_qa(episode_id: int) -> dict[str, Any]:
     mismatched_chunk_ids = [
         c["id"] for c, r in zip(chunks, voice_results) if not r["match"]
     ]
+    length_chunks = _check_chunk_lengths(chunks, chunk_durations)
+    length_chunk_ids = [c["id"] for c in length_chunks]
+    length_ok = not length_chunk_ids
 
     silence_gaps = _find_silence_gaps(episode["wav_master_path"])
     # A gap in the master may legitimately be as long as the cap plus the
@@ -300,7 +396,7 @@ def run_qa(episode_id: int) -> dict[str, Any]:
     silence_ok = not over_cap_gaps and not silent_chunks
     silent_chunk_ids = [c["id"] for c in silent_chunks]
 
-    overall_pass = duration_ok and clipping_ok and silence_ok and voice_ok
+    overall_pass = duration_ok and clipping_ok and silence_ok and voice_ok and length_ok
 
     conn = get_connection()
     try:
@@ -308,12 +404,15 @@ def run_qa(episode_id: int) -> dict[str, Any]:
             conn.execute("UPDATE render_chunks SET qa_clip_detected = 1 WHERE id = ?", (chunk_id,))
         for chunk_id in silent_chunk_ids:
             conn.execute("UPDATE render_chunks SET qa_silence_detected = 1 WHERE id = ?", (chunk_id,))
+        for chunk_id in length_chunk_ids:
+            conn.execute("UPDATE render_chunks SET qa_length_detected = 1 WHERE id = ?", (chunk_id,))
         qa_report_md = _render_qa_report_markdown(
             episode,
             duration_seconds=duration_seconds, duration_floor_seconds=duration_floor_seconds,
             duration_ok=duration_ok, clip_results=clip_results, silence_gaps=silence_gaps,
             silence_ok=silence_ok, voice_results=voice_results, voice_ok=voice_ok,
             silent_chunks=silent_chunks, master_gap_cap=master_gap_cap,
+            length_chunks=length_chunks, voice_mapping_source=voice_mapping_source,
             overall_pass=overall_pass,
         )
         _write_document(conn, episode_id, "qa_report", qa_report_md)
@@ -333,7 +432,9 @@ def run_qa(episode_id: int) -> dict[str, Any]:
     finally:
         conn.close()
 
-    failing_chunk_ids = sorted(set(clipped_chunk_ids) | set(mismatched_chunk_ids) | set(silent_chunk_ids))
+    failing_chunk_ids = sorted(
+        set(clipped_chunk_ids) | set(mismatched_chunk_ids) | set(silent_chunk_ids) | set(length_chunk_ids)
+    )
 
     delivery_result = None
     if overall_pass:
@@ -350,6 +451,7 @@ def run_qa(episode_id: int) -> dict[str, Any]:
         "clipping_ok": clipping_ok,
         "silence_ok": silence_ok,
         "voice_ok": voice_ok,
+        "length_ok": length_ok,
         "failing_chunk_ids": failing_chunk_ids,
         "duration_seconds": duration_seconds,
         "delivery": delivery_result,
@@ -357,8 +459,8 @@ def run_qa(episode_id: int) -> dict[str, Any]:
 
 
 def retry_failing_chunks(episode_id: int) -> dict[str, Any]:
-    """Re-render only the chunks the last QA pass flagged (clipping or
-    voice mismatch) using render.requeue_chunks_for_rerender — never the
+    """Re-render only the chunks the last QA pass flagged (clipping, in-chunk
+    silence, cut-short length, or voice mismatch) using render.requeue_chunks_for_rerender — never the
     whole episode. Raises QAError if the last QA run has no flagged chunks
     (e.g. it failed only on duration/silence, which no single chunk fix can
     address)."""
@@ -376,7 +478,7 @@ def retry_failing_chunks(episode_id: int) -> dict[str, Any]:
         if job is None:
             raise QAError(f"Episode {episode_id} has no render job on record.")
         job_id = int(job["id"])
-        voice_mapping = config.voice_mapping
+        voice_mapping = render.voice_mapping_for_job(dict(job))
         rows = [dict(r) for r in conn.execute(
             "SELECT * FROM render_chunks WHERE job_id = ?", (job_id,)
         ).fetchall()]
@@ -385,7 +487,7 @@ def retry_failing_chunks(episode_id: int) -> dict[str, Any]:
 
     failing_ids = [
         r["id"] for r in rows
-        if r["qa_clip_detected"] or r["qa_silence_detected"]
+        if r["qa_clip_detected"] or r["qa_silence_detected"] or r["qa_length_detected"]
         or voice_mapping.get(r["speaker"]) != r["voice_reference_used"]
     ]
     if not failing_ids:

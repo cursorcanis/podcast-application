@@ -147,7 +147,11 @@ def test_upload_route_rejects_unmapped_speaker(env):
 
 # --- autopilot end to end --------------------------------------------------------
 
-def _fake_comfyui(monkeypatch, *, fail_first_n_polls: int = 0, seconds: float = 6.0):
+# 9s per chunk keeps LONG_SCRIPT's two chunks (about 20 and 36 words) under QA's 4.5
+# words/s truncation cap (POD-110) — 6s was ~340 wpm, faster than anyone
+# speaks — while staying under its 10s floor for flagging identical-length
+# chunks, which every tone here is.
+def _fake_comfyui(monkeypatch, *, fail_first_n_polls: int = 0, seconds: float = 9.0):
     save_node_id = workflow.resolve_roles(workflow.load_workflow(config.path_to_workflow_json)).save_node_id
     state = {"submits": 0, "polls": 0}
 
