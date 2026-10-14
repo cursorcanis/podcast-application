@@ -1,0 +1,82 @@
+{# Live render dashboard. Filled in and kept current by static/render.js,
+   which polls /api/episodes/<dash_episode_id>/render/status. #}
+<section class="card render-dash" id="render-dash" data-episode-id="{{ dash_episode_id }}"
+         data-reload-on-finish="{{ 'true' if reload_on_finish else 'false' }}">
+  <div class="dash-head">
+    <div>
+      <div class="dash-kicker">{{ dash_kicker }}</div>
+      <div class="dash-title" id="dash-episode-title">{{ dash_title }}</div>
+    </div>
+    <span id="job-status" class="status-pill checking">loading…</span>
+  </div>
+
+  <div class="dash-progress">
+    <div class="dash-percent"><span id="dash-percent">0</span><small>%</small></div>
+    <div class="dash-progress-body">
+      <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100"
+           aria-valuenow="0" id="dash-progressbar" aria-label="Render progress">
+        <div class="progress-fill" id="dash-fill" style="width:0%"></div>
+      </div>
+      <div class="meta">
+        <span id="count-succeeded">0</span> of <span id="count-total">0</span> chunks rendered ·
+        <span id="dash-eta-text">estimating finish time…</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="banner error" id="dash-stalled" hidden>
+    The current chunk has been rendering for <span id="dash-stalled-time"></span>, far longer than
+    a chunk ever takes — the render worker has stopped (usually because this app or ComfyUI was
+    closed or restarted). Close and reopen the app with <code>start_app.bat</code>; it picks the
+    render up where it left off.
+  </div>
+
+  <div class="tiles">
+    <div class="tile"><div class="tile-label">Elapsed</div><div class="tile-value" id="elapsed">—</div></div>
+    <div class="tile"><div class="tile-label">Time remaining</div><div class="tile-value" id="remaining">—</div>
+      <div class="tile-note" id="projection-basis">—</div></div>
+    <div class="tile"><div class="tile-label">Audio rendered</div><div class="tile-value" id="dash-audio">—</div>
+      <div class="tile-note">estimated from word count</div></div>
+    <div class="tile"><div class="tile-label">Words voiced</div><div class="tile-value" id="dash-words">—</div></div>
+    <div class="tile"><div class="tile-label">Avg per chunk</div><div class="tile-value" id="dash-avg">—</div>
+      <div class="tile-note" id="dash-range">&nbsp;</div></div>
+    <div class="tile"><div class="tile-label">Retries / failed</div><div class="tile-value" id="dash-retries">—</div>
+      <div class="tile-note">retries are automatic</div></div>
+  </div>
+
+  <div class="now-rendering" id="dash-current" hidden>
+    <div class="tile-label">Now rendering — chunk <span id="dash-current-index"></span>
+      · <span id="dash-current-speaker"></span>
+      · <span id="dash-current-time"></span></div>
+    <p id="dash-current-text"></p>
+  </div>
+
+  <div class="chunk-map-head">
+    <div class="tile-label">Chunk map</div>
+    <div class="legend">
+      <span><i class="sw succeeded"></i>done (<span id="count-succeeded-2">0</span>)</span>
+      <span><i class="sw in_flight"></i>rendering (<span id="count-in-flight">0</span>)</span>
+      <span><i class="sw pending"></i>waiting (<span id="count-pending">0</span>)</span>
+      <span><i class="sw failed"></i>failed (<span id="count-failed">0</span>)</span>
+    </div>
+  </div>
+  <div class="chunk-map" id="dash-map" aria-label="One square per chunk, coloured by status"></div>
+  <div class="map-tip meta" id="dash-tip">Hover a square to see that chunk.</div>
+
+  {% if show_cancel %}
+  <form method="post" action="/episodes/{{ dash_episode_id }}/render/cancel" class="dash-cancel">
+    <button type="submit" class="danger">Cancel render</button>
+  </form>
+  {% endif %}
+</section>
+
+<details class="card">
+  <summary><strong>Chunk details</strong> <span class="meta">(table of every chunk)</span></summary>
+  <table class="table" id="chunk-table">
+    <thead>
+      <tr><th>#</th><th>Speaker</th><th>Status</th><th>Attempts</th>
+          <th>Render time</th><th>Error</th></tr>
+    </thead>
+    <tbody id="chunk-rows"></tbody>
+  </table>
+</details>

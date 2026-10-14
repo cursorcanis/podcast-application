@@ -857,9 +857,58 @@ def job_progress(job_id: int) -> dict[str, Any]:
         projected_total_seconds = (job.get("projected_hours") or 0.0) * 3600.0
         projection_basis = "initial_estimate"
 
+    remaining_seconds = max(projected_total_seconds - elapsed_seconds, 0.0)
+    measured = [c["measured_render_seconds"] for c in succeeded if c["measured_render_seconds"]]
+
+    def _words(rows: list[dict]) -> int:
+        return sum(len((c.get("text") or "").split()) for c in rows)
+
+    def _est_audio(rows: list[dict]) -> float:
+        return float(sum(c.get("chunk_seconds_target") or 0 for c in rows))
+
+    current = None
+    if in_flight:
+        c = in_flight[0]
+        started = _parse_iso(c.get("started_at"))
+        text = (c.get("text") or "").strip()
+        current = {
+            "chunk_index": c["chunk_index"],
+            "speaker": c["speaker"],
+            "status": c["status"],
+            "attempt_count": c["attempt_count"],
+            "text_excerpt": text if len(text) <= 220 else text[:217].rstrip() + "…",
+            "running_seconds": round((now - started).total_seconds(), 1) if started else None,
+        }
+        # Past the point where poll_history would have given up on it: the
+        # worker that owned this chunk is gone (app or ComfyUI restarted).
+        stall_after = config.chunk_timeout_min * 60.0 * (1 + comfyui.RUNNING_GRACE_MULTIPLIER)
+        current["stalled"] = bool(
+            current["running_seconds"] and current["running_seconds"] > stall_after
+        )
+
+    # Dashboard metrics: everything the render page shows beyond the raw
+    # counts. Audio figures are text-length estimates (150 wpm), labelled as
+    # such on the page — the measured duration only exists after mastering.
+    metrics = {
+        "percent": round(100.0 * len(succeeded) / total, 1) if total else 0.0,
+        "words_total": _words(chunks),
+        "words_done": _words(succeeded),
+        "est_audio_total_seconds": _est_audio(chunks),
+        "est_audio_done_seconds": _est_audio(succeeded),
+        "avg_chunk_seconds": round(sum(measured) / len(measured), 1) if measured else None,
+        "fastest_chunk_seconds": round(min(measured), 1) if measured else None,
+        "slowest_chunk_seconds": round(max(measured), 1) if measured else None,
+        "retries": sum(max((c.get("attempt_count") or 0) - 1, 0) for c in chunks),
+        "eta": (
+            (now.timestamp() + remaining_seconds) if job["status"] == "running" else None
+        ),
+        "current": current,
+    }
+
     return {
         "job": job,
         "chunks": chunks,
+        "metrics": metrics,
         "counts": {
             "total": total,
             "succeeded": len(succeeded),
@@ -869,6 +918,6 @@ def job_progress(job_id: int) -> dict[str, Any]:
         },
         "elapsed_seconds": round(elapsed_seconds, 1),
         "projected_total_seconds": round(projected_total_seconds, 1),
-        "remaining_seconds": round(max(projected_total_seconds - elapsed_seconds, 0.0), 1),
+        "remaining_seconds": round(remaining_seconds, 1),
         "projection_basis": projection_basis,
     }

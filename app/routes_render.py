@@ -14,7 +14,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
-from . import episodes, render
+from . import autopilot, episodes, render
 from .web import templates
 
 router = APIRouter()
@@ -38,6 +38,14 @@ def render_screen(request: Request, episode_id: int):
         and system_active["episode_id"] != episode_id
     )
 
+    queue_position = None
+    active_episode = None
+    if blocked_by_other:
+        active_episode = episodes.get_episode(system_active["episode_id"])
+        queue = autopilot.waiting_queue()
+        if episode_id in queue:
+            queue_position = queue.index(episode_id) + 1
+
     preview = None
     error = request.query_params.get("error")
     if job is None and not blocked_by_other and episode["status"] == "script_ready":
@@ -55,6 +63,8 @@ def render_screen(request: Request, episode_id: int):
             "active_job_is_this_episode": active_job_is_this_episode,
             "blocked_by_other": blocked_by_other,
             "system_active": system_active,
+            "active_episode": active_episode,
+            "queue_position": queue_position,
             "preview": preview,
             "error": error,
         },
@@ -100,4 +110,6 @@ def render_status(episode_id: int) -> JSONResponse:
     if job is None:
         return JSONResponse({"job": None})
     progress = render.job_progress(job["id"])
+    episode = episodes.get_episode(episode_id)
+    progress["episode"] = {"id": episode_id, "title": episode["title"] if episode else ""}
     return JSONResponse(progress)

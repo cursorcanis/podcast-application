@@ -18,10 +18,21 @@
 
 {% if blocked_by_other %}
 <div class="banner warn">
-  Render job {{ system_active.id }} for episode {{ system_active.episode_id }} is already
-  {{ system_active.status }} — only one render job may run system-wide at a time (the GPU is
-  the bottleneck). Wait for it to finish before starting this episode's render.
+  {% if queue_position %}
+  This episode is <strong>#{{ queue_position }} in the queue</strong> and will start rendering
+  automatically when the GPU is free.
+  {% else %}
+  Another episode is using the GPU right now — only one render runs at a time.
+  You can start this one when it finishes.
+  {% endif %}
+  Below is the render that is running now.
 </div>
+{% with dash_episode_id=system_active.episode_id,
+        dash_kicker="Rendering now — episode " ~ system_active.episode_id,
+        dash_title=(active_episode.title if active_episode else ""),
+        show_cancel=False, reload_on_finish=(system_active.status == 'running') %}
+  {% include "_render_dashboard.html" %}
+{% endwith %}
 
 {% elif job is none %}
   {% if episode.status != 'script_ready' %}
@@ -64,46 +75,19 @@
     </form>
   </div>
   {% else %}
-  <section class="card">
-    <h3>Job {{ job.id }} — <span id="job-status" class="status-pill">{{ job.status }}</span></h3>
-    <p class="meta">
-      Elapsed: <span id="elapsed">—</span> ·
-      Projected total: <span id="projected">—</span> ·
-      Remaining: <span id="remaining">—</span>
-      (<span id="projection-basis">—</span>)
-    </p>
-    <p class="meta">
-      Chunks: <span id="count-succeeded">0</span> succeeded /
-      <span id="count-in-flight">0</span> in flight /
-      <span id="count-pending">0</span> pending /
-      <span id="count-failed">0</span> failed
-      of <span id="count-total">0</span>
-    </p>
-    {% if job.status == 'running' %}
-    <form method="post" action="/episodes/{{ episode.id }}/render/cancel">
-      <button type="submit">Cancel render</button>
-    </form>
-    {% endif %}
-  </section>
-
-  <section class="card">
-    <h3>Chunks</h3>
-    <table id="chunk-table" style="width:100%; font-size: 13px; border-collapse: collapse;">
-      <thead>
-        <tr><th style="text-align:left">#</th><th style="text-align:left">Speaker</th>
-            <th style="text-align:left">Status</th><th style="text-align:left">Attempts</th>
-            <th style="text-align:left">Measured (s)</th><th style="text-align:left">Error</th></tr>
-      </thead>
-      <tbody id="chunk-rows"></tbody>
-    </table>
-  </section>
+  {% with dash_episode_id=episode.id,
+          dash_kicker="Render job " ~ job.id,
+          dash_title=episode.title,
+          show_cancel=(job.status == 'running'),
+          reload_on_finish=(job.status == 'running') %}
+    {% include "_render_dashboard.html" %}
+  {% endwith %}
   {% endif %}
 {% endif %}
 
 {% endblock %}
 {% block scripts %}
-{% if job is not none and job.status == 'running' %}
-<script>window.PODCAST_FOUNDRY_EPISODE_ID = {{ episode.id }};</script>
+{% if blocked_by_other or (job is not none and job.status != 'awaiting_cap_confirmation') %}
 <script src="/static/render.js"></script>
 {% endif %}
 {% endblock %}

@@ -353,6 +353,21 @@ def _earliest_waiting_upload() -> int | None:
         conn.close()
 
 
+def waiting_queue() -> list[int]:
+    """Episode ids waiting for the GPU, in the order they will render (the
+    same first-come, first-served rule as _earliest_waiting_upload)."""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT e.id FROM episodes e WHERE e.autopilot = 1 AND e.status = 'script_ready' "
+            "AND NOT EXISTS (SELECT 1 FROM render_jobs j WHERE j.episode_id = e.id) "
+            "ORDER BY e.id ASC"
+        ).fetchall()
+        return [int(r["id"]) for r in rows]
+    finally:
+        conn.close()
+
+
 def _master_exists(ep: dict) -> bool:
     path = ep.get("wav_master_path")
     return bool(path) and Path(path).exists()

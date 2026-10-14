@@ -282,3 +282,40 @@ def test_voice_mapping_snapshot_written_once_and_used_on_resume(client, monkeypa
     # The resumed chunk rendered under the job's frozen mapping, so the
     # episode doesn't switch voices half-way through.
     assert [c["voice_reference_used"] for c in chunks] == ["voice_a.wav", "voice_b.wav"]
+
+
+def test_progress_metrics_and_stall_flag_for_dashboard(client, monkeypatch):
+    episode_id = _create_episode_to_script_ready(client, "[HOST_A] First turn here. [HOST_B] Second turn.")
+    monkeypatch.setattr(comfyui, "submit_prompt", lambda url, prompt, client_id: "prompt-x")
+
+    def crash_on_second(url, prompt_id, *, timeout_s, **kwargs):
+        if crash_on_second.calls:
+            raise RuntimeError("worker died mid chunk 2")
+        crash_on_second.calls += 1
+        return {"outcome": "succeeded", "outputs": {_save_node_id(): {"audio": [{"filename": "c1.flac", "subfolder": "x"}]}}}
+    crash_on_second.calls = 0
+    monkeypatch.setattr(comfyui, "poll_history", crash_on_second)
+
+    job_id = render.start_render_job(episode_id)["job_id"]
+    with pytest.raises(RuntimeError):
+        render._run_job(job_id)
+
+    m = render.job_progress(job_id)["metrics"]
+    assert m["percent"] == 50.0
+    assert m["words_total"] == 5 and m["words_done"] == 3
+    assert m["eta"] is not None
+    assert m["current"]["chunk_index"] == 1 and m["current"]["speaker"] == "HOST_B"
+    assert m["current"]["stalled"] is False
+
+    # Chunk 2 "started" a day ago: far past the poll give-up point, so the
+    # dashboard must say the worker is gone instead of counting down.
+    conn = db.get_connection()
+    conn.execute("UPDATE render_chunks SET started_at = '2000-01-01T00:00:00+00:00' WHERE job_id = ? AND chunk_index = 1", (job_id,))
+    conn.commit()
+    conn.close()
+    assert render.job_progress(job_id)["metrics"]["current"]["stalled"] is True
+
+    body = client.get(f"/api/episodes/{episode_id}/render/status").json()
+    assert body["episode"]["title"] == "Render Test Episode"
+    page = client.get(f"/episodes/{episode_id}/render").text
+    assert 'id="render-dash"' in page and "/static/render.js" in page

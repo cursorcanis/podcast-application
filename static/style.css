@@ -124,3 +124,54 @@ form.inline button { margin-right: 6px; }
 .episode-row h3, .source-row h3 { text-transform: none; font-size: 15px; color: var(--fg); margin-bottom: 6px; }
 .episode-row a { color: var(--fg); text-decoration: none; }
 .episode-row a:hover { text-decoration: underline; }
+/* ---- Render dashboard (templates/_render_dashboard.html, static/render.js) ---- */
+.render-dash { padding: 20px; }
+.dash-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 16px; }
+.dash-kicker { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.dash-title { font-size: 16px; font-weight: 700; margin-top: 2px; overflow-wrap: anywhere; }
+.status-pill.running { background: #e0ecff; color: #1d4ed8; }
+.dash-progress { display: flex; align-items: center; gap: 18px; margin-bottom: 18px; }
+.dash-percent { font-size: 40px; font-weight: 700; line-height: 1; min-width: 92px; font-variant-numeric: tabular-nums; }
+.dash-percent small { font-size: 18px; color: var(--muted); margin-left: 2px; }
+.dash-progress-body { flex: 1; min-width: 0; }
+.progress-track { height: 14px; background: #e8edf3; border-radius: 999px; overflow: hidden; margin-bottom: 6px; }
+.progress-fill { height: 100%; background: var(--ok); border-radius: 999px; transition: width .6s ease; }
+.progress-fill.live {
+  background-image: linear-gradient(45deg, rgba(255,255,255,.18) 25%, transparent 25%, transparent 50%,
+    rgba(255,255,255,.18) 50%, rgba(255,255,255,.18) 75%, transparent 75%, transparent);
+  background-size: 20px 20px;
+  animation: progress-stripes 1.2s linear infinite;
+}
+@keyframes progress-stripes { from { background-position: 20px 0; } to { background-position: 0 0; } }
+@media (prefers-reduced-motion: reduce) { .progress-fill.live { animation: none; } }
+.tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 16px; }
+.tile { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; background: #fbfcfe; }
+.tile-label { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.tile-value { font-size: 20px; font-weight: 700; margin-top: 4px; font-variant-numeric: tabular-nums; }
+.tile-note { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.now-rendering { border-left: 3px solid #1d4ed8; background: #f3f7ff; border-radius: 0 8px 8px 0; padding: 10px 14px; margin-bottom: 16px; }
+.now-rendering p { margin: 6px 0 0; font-size: 14px; font-style: italic; color: #334155; }
+.chunk-map-head { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; color: var(--muted); }
+.sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; vertical-align: -1px; margin-right: 4px; }
+.chunk-map { display: grid; grid-template-columns: repeat(auto-fill, minmax(16px, 1fr)); gap: 3px; }
+.chunk-map .cell { aspect-ratio: 1; border-radius: 3px; cursor: default; position: relative; }
+.chunk-map .cell:hover, .chunk-map .cell:focus { outline: 2px solid var(--fg); outline-offset: 1px; }
+.chunk-map .cell.retried::after {
+  content: ""; position: absolute; right: 2px; top: 2px; width: 4px; height: 4px; border-radius: 50%; background: #fff;
+}
+.sw.succeeded, .cell.succeeded { background: var(--ok); }
+.sw.in_flight, .cell.in_flight { background: #1d4ed8; }
+.cell.in_flight { animation: cell-pulse 1.4s ease-in-out infinite; }
+@keyframes cell-pulse { 50% { opacity: .45; } }
+@media (prefers-reduced-motion: reduce) { .cell.in_flight { animation: none; } }
+.sw.pending, .cell.pending { background: #d5dde7; }
+.sw.failed, .cell.failed { background: var(--bad); }
+.map-tip { min-height: 18px; margin-top: 8px; }
+.dash-cancel { margin-top: 14px; }
+details.card summary { cursor: pointer; }
+details.card .table { width: 100%; margin-top: 10px; font-size: 13px; border-collapse: collapse; }
+@media (max-width: 560px) {
+  .tiles { grid-template-columns: repeat(2, 1fr); }
+  .dash-progress { flex-direction: column; align-items: stretch; gap: 8px; }
+}
