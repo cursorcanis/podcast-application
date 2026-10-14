@@ -100,7 +100,9 @@ Paperclip ticket map (from docs; statuses as last recorded):
 7. Voice probes for pod100 (`probe_voice_b_pod100*`, `probe_results.json`) ended with `render_failed` / `file_not_found` (ComfyUI output path mismatch under `...\_ComfyUI\output\podcast_foundry\podcast_foundry\`). Unresolved voice-clipping investigation; outcome of the clip check was `clips: false` only because no file was found, so it proves nothing.
 8. Possible follow-up for Chatterbox quality: random long internal silences (QA now catches >3 s per chunk and re-renders with a new seed).
 9. Something unloaded the Qwen model mid-generation twice on 2026-10-12 (cause unknown; Hermes model switching?). The 2026-10-13 live run completed (2,917 words in 643 s, good quality), but reports run short of the 4,000–6,000 target. Possible fix: generate section by section from an outline.
-10. Uncommitted POD-109 (VOICE_MAPPING -> voice_c/voice_d) is in the working tree from an unidentified 10-13 morning session; it needs committing once the Board confirms it.
+10. ~~POD-109 awaiting the Board~~ Confirmed by the user 2026-10-13 and merged (`a49a525`).
+11. Unknown author of the 10-13 08:21–09:14 POD-109/110 edits; the user isn't sure whether Paperclip ran. If Paperclip is running, the pf-* agents should not take POD tickets.
+12. **Render-time estimate is ~4x optimistic.** `RENDER_SECONDS_PER_AUDIO_SECOND` = 3.83 (POD-3 benchmark), but ep 12 measured ~15x on this machine (AMD Radeon 890M iGPU, ComfyUI 0.39.2): 46.5 s of audio in ~12 min, with chunk 0 at 205 s including model load. The 3-hour render cap projection undercounts by the same factor. Recalibrate (Board/Audio Engineer call) after a longer measurement.
 
 ## Scratch files in repo root (untracked, not product code)
 `_e2e_driver.py`, `_e2e_script.txt` (Oct 6 end-to-end driver);
@@ -159,3 +161,10 @@ render worker + resume for episode 8); `app_console.log` (Oct 6 console);
 - Live M7 report via Qwen completed: search 26 s, report 643 s, 2,917 words, no reasoning tags or URLs; spot-checked facts correct.
 - POD-110 finished (`pf-app-engineer` did most of it, then hit the user's Claude session limit; the lead reviewed and verified the rest inline). Files: `app/qa.py`, `app/render.py`, `app/db.py`, `tests/test_postprod_qa.py`, `tests/test_render.py`, `tests/test_upload_autopilot.py` (fake chunk length 6 s -> 9 s so test speech stays under the new 4.5 words/s cap). **96 passed.** Read-only check on real audio: ep 11's 100 chunks -> 0 flagged (max 3.45 w/s, median 2.58); ep 8's 29 chunks -> all flagged as a 34.000 s ceiling cluster.
 - Lesson: one Opus subagent run used up the rest of the user's session allowance. Prefer inline work or Qwen; give spawned role agents a sonnet model or a narrow brief.
+- User merged-by-instruction: PR #1 rebased onto `main` as `9c15ead` (M7 + agents), `9f9e510` (POD-110), `a49a525` (POD-109 VOICE_MAPPING -> voice_c/voice_d, Board-confirmed). Local `main` reset (mixed) to `origin/main`; working tree has no content diffs left. Next renders use voice_c/voice_d.
+
+### 2026-10-13 evening — POD-109 voice test render (Claude lead)
+- ComfyUI Desktop had stopped; relaunch triggered a self-update (ROCm SDK download, ~23 min), then served on **8189** as `.env` expects. All workflow node types present; GPU AMD Radeon 890M, 37.7 GB shared memory.
+- App started natively via `start_app.bat` (APP_PORT=8010) on the live DB; startup migrations added the POD-110 columns. Port 8000 is held by an unrelated service reached through WSL localhost forwarding (not this app).
+- Episode **12** `[TEST] POD-109 voice check (voice_c / voice_d)`: 155-word two-host script via /upload, recipient alfredoalea@gmail.com only. Job 12 succeeded 21:16:35 -> 21:28:33 UTC, 6/6 chunks on the first attempt; `voice_mapping_snapshot` = voice_c/voice_d. QA all OK (46.5 s; clipping, silences, length, voice-vs-snapshot). Delivered by email. Files under `_ComfyUI/output/podcast_foundry/2026-10-13_test-pod-109-voice-check-voice-c-voice-d/`.
+- Not verified: how the voices *sound*; that needs the user's ears.
