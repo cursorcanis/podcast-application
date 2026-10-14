@@ -13,6 +13,8 @@ the Board still picks, and app/episodes.py keeps the same hard validation).
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 from urllib.parse import quote
 
 from fastapi import APIRouter, Form, Request
@@ -32,14 +34,43 @@ def _err_redirect(path: str, message: str) -> RedirectResponse:
 @router.get("/episodes", response_class=HTMLResponse)
 def episodes_library(request: Request):
     status_filter = request.query_params.get("status") or None
+    rows = episodes.list_episodes(status_filter)
+    for ep in rows:
+        ep["audio_files"] = _audio_files(ep)
     return templates.TemplateResponse(
         request=request,
         name="episodes_list.html",
         context={
-            "episodes": episodes.list_episodes(status_filter),
+            "episodes": rows,
             "status_filter": status_filter,
+            "groups": episodes.LIBRARY_GROUPS,
+            "group_counts": episodes.library_group_counts(),
         },
     )
+
+
+_AUDIO_KINDS = (
+    ("archive_mp3", "archive_mp3_path", "MP3 (192k)"),
+    ("wav_master", "wav_master_path", "WAV master"),
+    ("email_mp3", "email_mp3_path", "Email MP3"),
+)
+
+
+def _audio_files(ep: dict) -> list[dict]:
+    """The finished audio files that actually exist on disk, for the
+    library's player and download buttons (a path in the DB whose file was
+    moved or deleted is left out rather than offered as a broken link)."""
+    files = []
+    for kind, column, label in _AUDIO_KINDS:
+        path = ep.get(column)
+        if path and Path(path).is_file():
+            files.append({
+                "kind": kind,
+                "label": label,
+                "path": path,
+                "size_mb": round(Path(path).stat().st_size / 1_000_000, 1),
+            })
+    return files
 
 
 @router.get("/episodes/new", response_class=HTMLResponse)

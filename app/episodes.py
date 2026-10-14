@@ -227,10 +227,40 @@ def _row_to_episode(row: sqlite3.Row) -> dict:
     return d
 
 
+# Episode Library tabs: each groups the raw statuses a listener thinks of
+# as one stage. A raw status name still works as a filter too.
+LIBRARY_GROUPS: dict[str, tuple[str, tuple[str, ...]]] = {
+    "finished": ("Finished", ("delivered", "delivered_paused", "ready")),
+    "in_progress": ("In progress", ("script_ready", "rendering", "rendered", "postproduction", "qa")),
+    "attention": ("Needs attention", ("qa_failed", "failed")),
+    "drafts": ("Drafts", ("draft", "sources_pending_approval", "sources_approved")),
+}
+
+
+def library_group_counts() -> dict[str, int]:
+    conn = get_connection()
+    try:
+        by_status = {r["status"]: r["n"] for r in conn.execute(
+            "SELECT status, COUNT(*) AS n FROM episodes GROUP BY status"
+        ).fetchall()}
+    finally:
+        conn.close()
+    counts = {key: sum(by_status.get(s, 0) for s in statuses)
+              for key, (_label, statuses) in LIBRARY_GROUPS.items()}
+    counts["all"] = sum(by_status.values())
+    return counts
+
+
 def list_episodes(status: str | None = None) -> list[dict]:
     conn = get_connection()
     try:
-        if status:
+        if status in LIBRARY_GROUPS:
+            statuses = LIBRARY_GROUPS[status][1]
+            rows = conn.execute(
+                f"SELECT * FROM episodes WHERE status IN ({','.join('?' * len(statuses))}) ORDER BY id DESC",
+                statuses,
+            ).fetchall()
+        elif status:
             rows = conn.execute(
                 "SELECT * FROM episodes WHERE status = ? ORDER BY id DESC", (status,)
             ).fetchall()

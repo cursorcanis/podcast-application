@@ -62,7 +62,7 @@ def retry_qa(episode_id: int):
 
 
 @router.get("/episodes/{episode_id}/download/{kind}")
-def download(episode_id: int, kind: str):
+def download(episode_id: int, kind: str, inline: bool = False):
     if kind not in _DOWNLOAD_COLUMNS:
         return _err_redirect(episode_id, f"Unknown download kind '{kind}'.")
     episode = episodes.get_episode(episode_id)
@@ -72,4 +72,9 @@ def download(episode_id: int, kind: str):
     path = episode.get(column)
     if not path or not Path(path).exists():
         return _err_redirect(episode_id, f"No {kind} file is available for this episode yet.")
-    return FileResponse(path, media_type=media_type, filename=Path(path).name)
+    # inline=1 is the library's <audio> player: same file, served to play in
+    # the page (seekable — FileResponse honours Range requests) not saved.
+    return FileResponse(
+        path, media_type=media_type, filename=Path(path).name,
+        content_disposition_type="inline" if inline else "attachment",
+    )

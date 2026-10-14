@@ -9,12 +9,15 @@
 <body>
   <header>
     <h1>Podcast Foundry</h1>
-    <nav>
-      <a href="/">Status</a>
-      <a href="/episodes">Episode Library</a>
-      <a href="/upload">Upload Script</a>
-      <a href="/episodes/new">New Episode</a>
-      <a href="/settings">Settings</a>
+    {% set path = request.url.path if request is defined else '' %}
+    <nav class="main-nav" aria-label="Main menu">
+      <a href="/" class="{{ 'active' if path == '/' }}">Status</a>
+      <a href="/rendering" class="{{ 'active' if path.endswith('/render') or path == '/rendering' }}">
+        {% if render_active() %}<span class="live-dot" title="A render is running"></span>{% endif %}Rendering</a>
+      <a href="/episodes" class="{{ 'active' if path.startswith('/episodes') and path != '/episodes/new' and not path.endswith('/render') }}">Episode Library</a>
+      <a href="/upload" class="{{ 'active' if path.startswith('/upload') }}">Upload Script</a>
+      <a href="/episodes/new" class="{{ 'active' if path == '/episodes/new' }}">New Episode</a>
+      <a href="/settings" class="{{ 'active' if path.startswith('/settings') }}">Settings</a>
     </nav>
   </header>
   <main>

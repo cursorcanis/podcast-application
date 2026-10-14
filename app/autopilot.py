@@ -218,10 +218,15 @@ def advance(episode_id: int) -> Step:
         set_note(episode_id, note, stop=True)
         return Step(False)
 
+    if job is not None and job["status"] == "discarded":
+        job = None  # its audio was deleted; this episode starts over
     if status == "script_ready" and job is None:
         active = render.get_system_active_job()
         if active is not None:
-            set_note(episode_id, f"Queued — waiting for episode {active['episode_id']}'s render to finish.")
+            if active["status"] == "held":
+                set_note(episode_id, f"Queued — episode {active['episode_id']}'s render is on hold.")
+            else:
+                set_note(episode_id, f"Queued — waiting for episode {active['episode_id']}'s render to finish.")
             return Step(True, POLL_SECONDS)
         ahead = _earliest_waiting_upload()
         if ahead is not None and ahead != episode_id:
@@ -261,6 +266,14 @@ def advance(episode_id: int) -> Step:
                 episode_id,
                 f"Rendering voice in ComfyUI — {c['succeeded']} of {c['total']} chunks done, "
                 f"about {mins:.0f} min left.",
+            )
+            return Step(True, POLL_SECONDS)
+        if job["status"] == "held":
+            c = render.job_progress(job["id"])["counts"]
+            set_note(
+                episode_id,
+                f"On hold — {c['succeeded']} of {c['total']} chunks done. Press Resume on the "
+                "render page to continue.",
             )
             return Step(True, POLL_SECONDS)
         if job["status"] == "cancelled":
@@ -345,7 +358,7 @@ def _earliest_waiting_upload() -> int | None:
     try:
         row = conn.execute(
             "SELECT e.id FROM episodes e WHERE e.autopilot = 1 AND e.status = 'script_ready' "
-            "AND NOT EXISTS (SELECT 1 FROM render_jobs j WHERE j.episode_id = e.id) "
+            "AND NOT EXISTS (SELECT 1 FROM render_jobs j WHERE j.episode_id = e.id AND j.status != 'discarded') "
             "ORDER BY e.id ASC LIMIT 1"
         ).fetchone()
         return int(row["id"]) if row else None
@@ -360,7 +373,7 @@ def waiting_queue() -> list[int]:
     try:
         rows = conn.execute(
             "SELECT e.id FROM episodes e WHERE e.autopilot = 1 AND e.status = 'script_ready' "
-            "AND NOT EXISTS (SELECT 1 FROM render_jobs j WHERE j.episode_id = e.id) "
+            "AND NOT EXISTS (SELECT 1 FROM render_jobs j WHERE j.episode_id = e.id AND j.status != 'discarded') "
             "ORDER BY e.id ASC"
         ).fetchall()
         return [int(r["id"]) for r in rows]

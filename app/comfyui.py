@@ -150,6 +150,17 @@ def cancel_prompt(url: str, prompt_id: str) -> None:
         pass
 
 
+def free_memory(url: str) -> None:
+    """Best-effort: ask ComfyUI to unload its models and release VRAM/RAM, so
+    a render put on hold doesn't keep Chatterbox resident while the GPU is
+    used for something else. The next chunk simply reloads the model."""
+    try:
+        with httpx.Client(timeout=HISTORY_REQUEST_TIMEOUT_S) as client:
+            client.post(f"{url.rstrip('/')}/free", json={"unload_models": True, "free_memory": True})
+    except httpx.HTTPError:
+        pass
+
+
 # A chunk that ComfyUI is still actively running at the CHUNK_TIMEOUT_MIN
 # deadline gets this many extra timeout-lengths before it is given up on —
 # a slow chunk is not a failed chunk. Time spent waiting in ComfyUI's queue
@@ -165,6 +176,7 @@ def poll_history(
     poll_interval_s: float = HISTORY_POLL_INTERVAL_S,
     sleep: Callable[[float], None] = time.sleep,
     now: Callable[[], float] = time.monotonic,
+    should_stop: Callable[[], bool] | None = None,
 ) -> Dict[str, Any]:
     """Poll GET /history/{prompt_id} until ComfyUI reports completion, an
     explicit error, or `timeout_s` elapses (the configured
@@ -175,9 +187,11 @@ def poll_history(
     queue is checked: a prompt still pending is waited on (queue time is not
     render time), and one still running gets RUNNING_GRACE_MULTIPLIER more
     timeouts. A prompt that is finally given up on is cancelled in ComfyUI
-    so the retry does not queue up behind it. Raises ComfyUIError only for
-    a transport failure talking to ComfyUI itself, never for a slow
-    render."""
+    so the retry does not queue up behind it. `should_stop`, checked on
+    every poll, lets the caller abandon the wait (the job was put on hold
+    or discarded): the prompt is cancelled in ComfyUI and the outcome is
+    "stopped". Raises ComfyUIError only for a transport failure talking to
+    ComfyUI itself, never for a slow render."""
     history_url = f"{url.rstrip('/')}/history/{prompt_id}"
     deadline = now() + timeout_s
     hard_deadline = deadline + timeout_s * RUNNING_GRACE_MULTIPLIER
@@ -197,6 +211,9 @@ def poll_history(
                 result = _interpret_history_entry(entry)
                 if result is not None:
                     return result
+            if should_stop is not None and should_stop():
+                cancel_prompt(url, prompt_id)
+                return {"outcome": "stopped"}
             current = now()
             if current >= deadline:
                 position = queue_position(url, prompt_id)

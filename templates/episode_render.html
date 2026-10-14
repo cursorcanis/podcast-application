@@ -25,12 +25,18 @@
   Another episode is using the GPU right now — only one render runs at a time.
   You can start this one when it finishes.
   {% endif %}
+  {% if system_active.status == 'held' %}
+  Below is the render that is on hold — resume it or discard it to free the queue.
+  {% else %}
   Below is the render that is running now.
+  {% endif %}
 </div>
 {% with dash_episode_id=system_active.episode_id,
-        dash_kicker="Rendering now — episode " ~ system_active.episode_id,
+        dash_kicker=("On hold — episode " if system_active.status == 'held' else "Rendering now — episode ") ~ system_active.episode_id,
         dash_title=(active_episode.title if active_episode else ""),
-        show_cancel=False, reload_on_finish=(system_active.status == 'running') %}
+        dash_job_status=system_active.status,
+        dash_back="/episodes/" ~ episode.id ~ "/render",
+        reload_on_finish=(system_active.status == 'running') %}
   {% include "_render_dashboard.html" %}
 {% endwith %}
 
@@ -78,7 +84,8 @@
   {% with dash_episode_id=episode.id,
           dash_kicker="Render job " ~ job.id,
           dash_title=episode.title,
-          show_cancel=(job.status == 'running'),
+          dash_job_status=job.status,
+          dash_back="/episodes/" ~ episode.id ~ "/render",
           reload_on_finish=(job.status == 'running') %}
     {% include "_render_dashboard.html" %}
   {% endwith %}

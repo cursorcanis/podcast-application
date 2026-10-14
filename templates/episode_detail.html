@@ -14,7 +14,9 @@
   <strong>Autopilot{% if episode.autopilot %} (running){% endif %}:</strong>
   <span id="autopilot-note">{{ episode.autopilot_note or "Starting." }}</span>
   {% if episode.status in ('script_ready', 'rendering') %}
-  · <a href="/episodes/{{ episode.id }}/render">render progress</a>
+  <div style="margin-top:10px">
+    <a class="button-link" href="/episodes/{{ episode.id }}/render">Rendering &mdash; view live progress &rarr;</a>
+  </div>
   {% endif %}
   {% if not episode.autopilot and episode.status not in ('delivered', 'delivered_paused') %}
   <form method="post" action="/episodes/{{ episode.id }}/autopilot/resume" style="margin-top:8px">

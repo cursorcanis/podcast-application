@@ -65,7 +65,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import autopilot, comfyui, db, render
+from . import autopilot, comfyui, db, episodes, render
 from .config import config
 from .routes_delivery import router as delivery_router
 from .routes_episodes import router as episodes_router
@@ -127,12 +127,31 @@ def status_screen(request: Request):
     """Status / Settings screen. The template reads caps/budget/pause state;
     the live ComfyUI result is rendered by static/status.js polling
     /api/comfyui/status every 10s — measured, never a guessed state."""
+    # The render that matters right now, shown first on this page so Status
+    # always leads straight back to the rendering screen.
+    current_render = None
+    active = render.get_system_active_job()
+    if active is not None:
+        progress = render.job_progress(active["id"])
+        ep = episodes.get_episode(active["episode_id"])
+        current_render = {
+            "episode_id": active["episode_id"],
+            "title": ep["title"] if ep else "",
+            "status": active["status"],
+            "percent": progress["metrics"]["percent"],
+            "done": progress["counts"]["succeeded"],
+            "total": progress["counts"]["total"],
+            "remaining_seconds": progress["remaining_seconds"],
+            "stalled": bool((progress["metrics"]["current"] or {}).get("stalled")),
+        }
     return templates.TemplateResponse(
         request=request,
         name="status.html",
         context={
             "settings": config,
             "settings_dict": config.public_view(),
+            "current_render": current_render,
+            "queued_count": len(autopilot.waiting_queue()),
         },
     )
 

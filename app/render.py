@@ -50,7 +50,10 @@ OUTPUT_PREFIX_ROOT = "podcast_foundry"
 # 8's range.
 CHUNK_TARGET_SAFETY_MARGIN = 0.75
 
-_ACTIVE_JOB_STATUSES = ("running", "awaiting_cap_confirmation")
+# A job on hold keeps its place on the GPU: nothing else starts rendering
+# until it is resumed, cancelled or discarded.
+_ACTIVE_JOB_STATUSES = ("running", "awaiting_cap_confirmation", "held")
+_ACTIVE_IN = "(" + ", ".join("?" for _ in _ACTIVE_JOB_STATUSES) + ")"
 
 _threads_lock = threading.Lock()
 _active_threads: dict[int, threading.Thread] = {}
@@ -162,9 +165,18 @@ def get_system_active_job() -> dict | None:
     conn = get_connection()
     try:
         row = conn.execute(
-            "SELECT * FROM render_jobs WHERE status IN (?, ?) ORDER BY id DESC LIMIT 1",
+            f"SELECT * FROM render_jobs WHERE status IN {_ACTIVE_IN} ORDER BY id DESC LIMIT 1",
             _ACTIVE_JOB_STATUSES,
         ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def get_latest_job() -> dict | None:
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT * FROM render_jobs ORDER BY id DESC LIMIT 1").fetchone()
         return dict(row) if row else None
     finally:
         conn.close()
@@ -214,7 +226,7 @@ def start_render_job(episode_id: int) -> dict:
                 f"'{episode['status']}'); render requires a ready script."
             )
         active = conn.execute(
-            "SELECT * FROM render_jobs WHERE status IN (?, ?) ORDER BY id DESC LIMIT 1",
+            f"SELECT * FROM render_jobs WHERE status IN {_ACTIVE_IN} ORDER BY id DESC LIMIT 1",
             _ACTIVE_JOB_STATUSES,
         ).fetchone()
         if active is not None:
@@ -330,6 +342,180 @@ def cancel_render_job(job_id: int) -> None:
         conn.commit()
     finally:
         conn.close()
+    _stop_in_flight(dict(job))
+
+
+def _stop_in_flight(job: dict) -> None:
+    """Pull this job's in-flight chunk out of ComfyUI right away (rather than
+    letting it finish), then have ComfyUI unload its models so the GPU and
+    memory are free."""
+    conn = get_connection()
+    try:
+        prompt_ids = [r["comfyui_prompt_id"] for r in conn.execute(
+            "SELECT comfyui_prompt_id FROM render_chunks WHERE job_id = ? "
+            "AND status IN ('submitted', 'rendering') AND comfyui_prompt_id IS NOT NULL",
+            (job["id"],),
+        ).fetchall()]
+    finally:
+        conn.close()
+    url = job.get("comfyui_url") or config.comfyui_url
+    for prompt_id in prompt_ids:
+        comfyui.cancel_prompt(url, prompt_id)
+    comfyui.free_memory(url)
+
+
+def hold_render_job(job_id: int) -> None:
+    """Pause a running render. Finished chunks are kept; the chunk ComfyUI
+    was working on is stopped and will be rendered again on resume. The job
+    keeps its place on the GPU, so queued episodes wait too."""
+    conn = get_connection()
+    try:
+        job = conn.execute("SELECT * FROM render_jobs WHERE id = ?", (job_id,)).fetchone()
+        if job is None:
+            raise RenderError(f"Render job {job_id} does not exist.")
+        if job["status"] != "running":
+            raise RenderError(f"Render job {job_id} is not running (status is '{job['status']}').")
+        conn.execute("UPDATE render_jobs SET status = 'held' WHERE id = ?", (job_id,))
+        conn.commit()
+        job = dict(job)
+    finally:
+        conn.close()
+    _stop_in_flight(job)
+
+
+def resume_held_job(job_id: int) -> None:
+    """Continue a held render from its first unfinished chunk."""
+    conn = get_connection()
+    try:
+        job = conn.execute("SELECT * FROM render_jobs WHERE id = ?", (job_id,)).fetchone()
+        if job is None:
+            raise RenderError(f"Render job {job_id} does not exist.")
+        if job["status"] != "held":
+            raise RenderError(f"Render job {job_id} is not on hold (status is '{job['status']}').")
+        # A chunk the worker had not yet released when the hold landed goes
+        # back to waiting; it is not a failure.
+        conn.execute(
+            "UPDATE render_chunks SET status = 'pending' "
+            "WHERE job_id = ? AND status IN ('submitted', 'rendering')",
+            (job_id,),
+        )
+        conn.execute("UPDATE render_jobs SET status = 'running' WHERE id = ?", (job_id,))
+        conn.execute(
+            "UPDATE episodes SET status = 'rendering', updated_at = ? WHERE id = ?",
+            (utcnow_iso(), job["episode_id"]),
+        )
+        conn.commit()
+    except sqlite3.IntegrityError as exc:
+        raise AlreadyRenderingError(
+            f"Another render job became active system-wide while resuming: {exc}"
+        ) from exc
+    finally:
+        conn.close()
+    _start_thread(job_id)
+
+
+# Statuses a render can be discarded from. A succeeded render is the input
+# to mastering, so it is never thrown away here.
+_DISCARDABLE_STATUSES = ("running", "awaiting_cap_confirmation", "held", "cancelled", "failed")
+
+
+def discard_render_job(job_id: int) -> dict[str, Any]:
+    """Stop a render if it is still going, delete every chunk audio file it
+    saved, and put the episode back to script_ready (autopilot off) so it can
+    be rendered again from scratch later. Returns what was removed."""
+    conn = get_connection()
+    try:
+        job = conn.execute("SELECT * FROM render_jobs WHERE id = ?", (job_id,)).fetchone()
+        if job is None:
+            raise RenderError(f"Render job {job_id} does not exist.")
+        if job["status"] not in _DISCARDABLE_STATUSES:
+            raise RenderError(
+                f"Render job {job_id} cannot be discarded (status is '{job['status']}')."
+            )
+        job = dict(job)
+        conn.execute(
+            "UPDATE render_jobs SET status = 'discarded', finished_at = ? WHERE id = ?",
+            (utcnow_iso(), job_id),
+        )
+        # Same transaction, so autopilot never sees a discarded job on an
+        # episode that still says it is rendering.
+        conn.execute(
+            "UPDATE episodes SET status = 'script_ready', autopilot = 0, autopilot_note = ?, "
+            "updated_at = ? WHERE id = ?",
+            ("Discarding the render…", utcnow_iso(), job["episode_id"]),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    _stop_in_flight(job)
+    # Let the worker notice and exit before its files are deleted, so it
+    # can't record a chunk that is about to disappear.
+    with _threads_lock:
+        worker = _active_threads.get(job_id)
+    if worker is not None and worker is not threading.current_thread():
+        worker.join(timeout=comfyui.HISTORY_POLL_INTERVAL_S * 5)
+
+    conn = get_connection()
+    try:
+        paths = [r["output_wav_path"] for r in conn.execute(
+            "SELECT output_wav_path FROM render_chunks WHERE job_id = ? AND output_wav_path IS NOT NULL",
+            (job_id,),
+        ).fetchall()]
+        files_deleted, bytes_freed = _delete_job_audio(job, paths)
+        conn.execute("DELETE FROM render_chunks WHERE job_id = ?", (job_id,))
+        conn.execute(
+            "UPDATE episodes SET autopilot_note = ?, updated_at = ? WHERE id = ?",
+            (
+                f"Render discarded — {files_deleted} saved chunk file(s) deleted "
+                f"({bytes_freed / 1_000_000:.1f} MB). Start the render again when you're ready.",
+                utcnow_iso(),
+                job["episode_id"],
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return {"files_deleted": files_deleted, "bytes_freed": bytes_freed}
+
+
+def _delete_job_audio(job: dict, paths: list[str]) -> tuple[int, int]:
+    """Delete a job's chunk files: the recorded output paths plus anything
+    else in the job's own output folder (e.g. a take ComfyUI saved after the
+    app gave up on it). Never touches anything outside OUTPUT_FOLDER."""
+    if not config.output_folder:
+        return 0, 0
+    root = Path(config.output_folder).resolve()
+    job_dir = root / f"ep{job['episode_id']}_job{job['id']}"
+    candidates = {Path(p) for p in paths}
+    if job_dir.is_dir():
+        candidates.update(f for f in job_dir.rglob("*") if f.is_file())
+    files_deleted = bytes_freed = 0
+    for path in candidates:
+        try:
+            resolved = path.resolve()
+        except OSError:
+            continue
+        if root not in resolved.parents or not resolved.is_file():
+            continue
+        try:
+            size = resolved.stat().st_size
+            resolved.unlink()
+        except OSError:
+            continue
+        files_deleted += 1
+        bytes_freed += size
+    if job_dir.is_dir():
+        for d in sorted((p for p in job_dir.rglob("*") if p.is_dir()), reverse=True):
+            try:
+                d.rmdir()
+            except OSError:
+                pass
+        try:
+            job_dir.rmdir()
+        except OSError:
+            pass
+    return files_deleted, bytes_freed
 
 
 def list_succeeded_chunks_for_job(job_id: int) -> list[dict]:
@@ -386,7 +572,7 @@ def requeue_chunks_for_rerender(job_id: int, chunk_ids: list[int]) -> None:
                 "cannot requeue chunks for a job that is still active."
             )
         active = conn.execute(
-            "SELECT * FROM render_jobs WHERE status IN (?, ?) ORDER BY id DESC LIMIT 1",
+            f"SELECT * FROM render_jobs WHERE status IN {_ACTIVE_IN} ORDER BY id DESC LIMIT 1",
             _ACTIVE_JOB_STATUSES,
         ).fetchone()
         if active is not None:
@@ -444,7 +630,7 @@ def resume_failed_job(job_id: int) -> None:
         if job["status"] != "failed":
             raise RenderError(f"Render job {job_id} has not failed (status is '{job['status']}').")
         active = conn.execute(
-            "SELECT * FROM render_jobs WHERE status IN (?, ?) ORDER BY id DESC LIMIT 1",
+            f"SELECT * FROM render_jobs WHERE status IN {_ACTIVE_IN} ORDER BY id DESC LIMIT 1",
             _ACTIVE_JOB_STATUSES,
         ).fetchone()
         if active is not None:
@@ -580,7 +766,9 @@ def _hit_length_ceiling(output_path: str, max_audio_seconds: float | None) -> bo
     return duration >= max_audio_seconds * LENGTH_CEILING_FRACTION
 
 
-def _recover_prior_attempt(comfyui_url: str, chunk: dict, timeout_s: float) -> dict | None:
+def _recover_prior_attempt(
+    comfyui_url: str, chunk: dict, timeout_s: float, should_stop=None
+) -> dict | None:
     """If this chunk already has a ComfyUI prompt on record, return that
     prompt's successful result — waiting for it if ComfyUI still has it
     queued or running — instead of submitting the text again. None means
@@ -591,7 +779,9 @@ def _recover_prior_attempt(comfyui_url: str, chunk: dict, timeout_s: float) -> d
     try:
         result = comfyui.fetch_finished_result(comfyui_url, prior)
         if result is None and comfyui.queue_position(comfyui_url, prior) is not None:
-            result = comfyui.poll_history(comfyui_url, prior, timeout_s=timeout_s)
+            result = comfyui.poll_history(
+                comfyui_url, prior, timeout_s=timeout_s, should_stop=should_stop
+            )
     except comfyui.ComfyUIError:
         return None
     if result is not None and result.get("outcome") == "succeeded":
@@ -637,6 +827,11 @@ def _run_job(job_id: int) -> None:
         else:
             voice_mapping = voice_mapping_for_job(job)
         chunk_timeout_s = config.chunk_timeout_min * 60.0
+
+        def job_stopped() -> bool:
+            row = conn.execute("SELECT status FROM render_jobs WHERE id = ?", (job_id,)).fetchone()
+            return row is None or row["status"] != "running"
+
         max_audio_seconds = workflow.max_audio_seconds(wf, roles)
 
         while True:
@@ -697,7 +892,9 @@ def _run_job(job_id: int) -> None:
             # An earlier attempt (one that timed out, or was in flight when
             # the app stopped) may have finished in ComfyUI after all —
             # adopt its audio rather than render the same text again.
-            result = _recover_prior_attempt(comfyui_url, chunk, chunk_timeout_s)
+            result = _recover_prior_attempt(comfyui_url, chunk, chunk_timeout_s, job_stopped)
+            if result is None and job_stopped():
+                continue
             started_at = chunk["started_at"] or utcnow_iso()
             if result is None:
                 started_at = utcnow_iso()
@@ -725,7 +922,9 @@ def _run_job(job_id: int) -> None:
                         (prompt_id, chunk["id"]),
                     )
                     conn.commit()
-                    result = comfyui.poll_history(comfyui_url, prompt_id, timeout_s=chunk_timeout_s)
+                    result = comfyui.poll_history(
+                        comfyui_url, prompt_id, timeout_s=chunk_timeout_s, should_stop=job_stopped
+                    )
                 except comfyui.ComfyUIError as exc:
                     conn.execute(
                         "UPDATE render_chunks SET status = 'failed', error_detail = ? WHERE id = ?",
@@ -739,6 +938,18 @@ def _run_job(job_id: int) -> None:
                     (voice_ref, chunk["id"]),
                 )
                 conn.commit()
+
+            if result["outcome"] != "succeeded" and job_stopped():
+                # Held, cancelled or discarded mid-chunk (the interrupt may
+                # show up as a ComfyUI error): the chunk just waits again and
+                # the attempt doesn't count against it.
+                conn.execute(
+                    "UPDATE render_chunks SET status = 'pending', "
+                    "attempt_count = MAX(attempt_count - 1, 0) WHERE id = ? AND status != 'succeeded'",
+                    (chunk["id"],),
+                )
+                conn.commit()
+                continue
 
             if result["outcome"] == "succeeded":
                 output = _extract_output_file(result.get("outputs", {}), roles.save_node_id)

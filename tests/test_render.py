@@ -319,3 +319,188 @@ def test_progress_metrics_and_stall_flag_for_dashboard(client, monkeypatch):
     assert body["episode"]["title"] == "Render Test Episode"
     page = client.get(f"/episodes/{episode_id}/render").text
     assert 'id="render-dash"' in page and "/static/render.js" in page
+
+
+# --- Hold / resume / discard ----------------------------------------------------
+
+@pytest.fixture()
+def comfy_calls(monkeypatch):
+    calls = {"cancel": [], "free": 0}
+    monkeypatch.setattr(comfyui, "cancel_prompt", lambda url, pid: calls["cancel"].append(pid))
+
+    def fake_free(url):
+        calls["free"] += 1
+
+    monkeypatch.setattr(comfyui, "free_memory", fake_free)
+    monkeypatch.setattr(comfyui, "fetch_finished_result", lambda url, pid: None)
+    monkeypatch.setattr(comfyui, "queue_position", lambda url, pid: None)
+    return calls
+
+
+def _hold_during_second_chunk(job_ref: dict, output_dir=None):
+    """poll_history fake: chunk 1 succeeds (writing its file when
+    output_dir is given); during chunk 2 the job is put on hold, and the
+    poll reports "stopped" the way the real one does via should_stop."""
+    save_node_id = _save_node_id()
+    state = {"n": 0}
+
+    def _poll(url, prompt_id, *, timeout_s, should_stop=None, **kwargs):
+        state["n"] += 1
+        if state["n"] == 1:
+            sub = f"podcast_foundry/ep{job_ref['episode_id']}_job{job_ref['job_id']}"
+            if output_dir is not None:
+                d = output_dir / sub.split("/", 1)[1]
+                d.mkdir(parents=True, exist_ok=True)
+                (d / "c1.flac").write_bytes(b"x" * 1000)
+            return {"outcome": "succeeded", "outputs": {save_node_id: {"audio": [{"filename": "c1.flac", "subfolder": sub}]}}}
+        render.hold_render_job(job_ref["job_id"])
+        assert should_stop is not None and should_stop()
+        return {"outcome": "stopped"}
+
+    return _poll
+
+
+def test_hold_stops_mid_chunk_keeps_progress_and_resume_finishes(client, monkeypatch, comfy_calls):
+    episode_id = _create_episode_to_script_ready(client, "[HOST_A] First turn. [HOST_B] Second turn.")
+    monkeypatch.setattr(comfyui, "submit_prompt", lambda url, prompt, client_id: "prompt-x")
+    result = render.start_render_job(episode_id)
+    ref = {"episode_id": episode_id, "job_id": result["job_id"]}
+    monkeypatch.setattr(comfyui, "poll_history", _hold_during_second_chunk(ref))
+
+    render._run_job(ref["job_id"])  # returns once the hold is seen
+
+    assert render.get_latest_job_for_episode(episode_id)["status"] == "held"
+    chunks = render.job_progress(ref["job_id"])["chunks"]
+    assert chunks[0]["status"] == "succeeded"
+    assert chunks[1]["status"] == "pending"
+    assert chunks[1]["attempt_count"] == 0  # a hold is not a failed attempt
+    assert comfy_calls["cancel"] == ["prompt-x"] and comfy_calls["free"] == 1
+
+    render.resume_held_job(ref["job_id"])
+    monkeypatch.setattr(comfyui, "poll_history", _fake_success("podcast_foundry/x", "c2.flac"))
+    render._run_job(ref["job_id"])
+    progress = render.job_progress(ref["job_id"])
+    assert progress["counts"]["succeeded"] == 2
+    assert render.get_latest_job_for_episode(episode_id)["status"] == "succeeded"
+
+
+def test_held_job_keeps_the_gpu_slot(client, monkeypatch, comfy_calls):
+    first = _create_episode_to_script_ready(client, "[HOST_A] One.")
+    second = _create_episode_to_script_ready(client, "[HOST_A] Two.")
+    job_id = render.start_render_job(first)["job_id"]
+    render.hold_render_job(job_id)
+    with pytest.raises(render.AlreadyRenderingError):
+        render.start_render_job(second)
+    with pytest.raises(render.RenderError, match="not running"):
+        render.hold_render_job(job_id)  # already held
+    render.resume_held_job(job_id)
+    with pytest.raises(render.RenderError, match="not on hold"):
+        render.resume_held_job(job_id)
+
+
+def test_discard_deletes_saved_chunks_and_resets_episode(client, monkeypatch, comfy_calls, tmp_path):
+    out = tmp_path / "out" / "podcast_foundry"
+    out.mkdir(parents=True)
+    monkeypatch.setitem(config.values, "OUTPUT_FOLDER", str(out))
+    outside = tmp_path / "out" / "keep_me.flac"
+    outside.write_bytes(b"keep")
+
+    episode_id = _create_episode_to_script_ready(client, "[HOST_A] First turn. [HOST_B] Second turn.")
+    monkeypatch.setattr(comfyui, "submit_prompt", lambda url, prompt, client_id: "prompt-x")
+    result = render.start_render_job(episode_id)
+    ref = {"episode_id": episode_id, "job_id": result["job_id"]}
+    monkeypatch.setattr(comfyui, "poll_history", _hold_during_second_chunk(ref, out))
+    render._run_job(ref["job_id"])
+    job_dir = out / f"ep{episode_id}_job{ref['job_id']}"
+    (job_dir / "late_take.flac").write_bytes(b"y" * 500)  # saved after the app gave up on it
+
+    resp = client.post(
+        f"/episodes/{episode_id}/render/discard?back=/episodes/{episode_id}/render",
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303 and resp.headers["location"] == f"/episodes/{episode_id}/render"
+
+    assert not job_dir.exists()
+    assert outside.read_bytes() == b"keep"
+    assert render.get_latest_job_for_episode(episode_id)["status"] == "discarded"
+    assert render.job_progress(ref["job_id"])["counts"]["total"] == 0
+    ep = episodes.get_episode(episode_id)
+    assert ep["status"] == "script_ready" and ep["autopilot"] == 0
+    assert "2 saved chunk file(s) deleted" in ep["autopilot_note"]
+    # The episode can be rendered again from scratch.
+    assert "Start render" in client.get(f"/episodes/{episode_id}/render").text
+    assert render.start_render_job(episode_id)["status"] == "running"
+
+
+def test_succeeded_render_cannot_be_discarded(client, monkeypatch, comfy_calls):
+    episode_id = _create_episode_to_script_ready(client, "[HOST_A] Hello.")
+    monkeypatch.setattr(comfyui, "submit_prompt", lambda url, prompt, client_id: "p")
+    monkeypatch.setattr(comfyui, "poll_history", _fake_success("podcast_foundry/x", "c.flac"))
+    job_id = render.start_render_job(episode_id)["job_id"]
+    render._run_job(job_id)
+    with pytest.raises(render.RenderError, match="cannot be discarded"):
+        render.discard_render_job(job_id)
+
+
+def test_queued_episode_page_shows_controls_for_the_active_render(client, monkeypatch, comfy_calls):
+    active = _create_episode_to_script_ready(client, "[HOST_A] One.")
+    queued = _create_episode_to_script_ready(client, "[HOST_A] Two.")
+    render.start_render_job(active)
+
+    page = client.get(f"/episodes/{queued}/render").text
+    assert f'action="/episodes/{active}/render/hold?back=/episodes/{queued}/render"' in page.replace("%2F", "/")
+
+    resp = client.post(f"/episodes/{active}/render/hold?back=/episodes/{queued}/render", follow_redirects=False)
+    assert resp.headers["location"] == f"/episodes/{queued}/render"
+    page = client.get(f"/episodes/{queued}/render").text
+    assert "On hold" in page and "/render/resume" in page and "Discard saved render" in page
+
+    # An off-site "back" is ignored.
+    resp = client.post(f"/episodes/{active}/render/resume?back=//evil.example", follow_redirects=False)
+    assert resp.headers["location"] == f"/episodes/{active}/render"
+    assert render.get_latest_job_for_episode(active)["status"] == "running"
+
+
+def test_rendering_button_leads_to_the_live_render(client, monkeypatch):
+    # No render ever: the shortcut falls back to the upload page.
+    resp = client.get("/rendering", follow_redirects=False)
+    assert resp.status_code == 303 and resp.headers["location"] == "/upload"
+    assert 'href="/rendering"' in client.get("/").text  # header button on every page
+
+    episode_id = _create_episode_to_script_ready(client, "[HOST_A] One turn. [HOST_B] Another.")
+    monkeypatch.setattr(comfyui, "submit_prompt", lambda url, prompt, client_id: "prompt-x")
+    render.start_render_job(episode_id)  # running, worker thread stubbed out
+
+    resp = client.get("/rendering", follow_redirects=False)
+    assert resp.headers["location"] == f"/episodes/{episode_id}/render"
+
+    status_page = client.get("/").text
+    assert "Open rendering screen" in status_page
+    assert f'href="/episodes/{episode_id}/render"' in status_page
+    assert 'class="live-dot"' in status_page
+
+
+def test_library_lists_finished_episode_with_player_and_downloads(client, tmp_path):
+    episode_id = _create_episode_to_script_ready(client, "[HOST_A] Done already.")
+    mp3 = tmp_path / "finished_archive_192k.mp3"
+    mp3.write_bytes(b"ID3" + b"\0" * 2000)
+    conn = db.get_connection()
+    conn.execute(
+        "UPDATE episodes SET status = 'delivered', archive_mp3_path = ?, "
+        "wav_master_path = ?, measured_duration_seconds = 1560 WHERE id = ?",
+        (str(mp3), str(tmp_path / "missing_master.wav"), episode_id),
+    )
+    conn.commit()
+    conn.close()
+
+    page = client.get("/episodes?status=finished").text
+    assert f'src="/episodes/{episode_id}/download/archive_mp3?inline=1"' in page
+    assert "MP3 (192k)" in page and str(mp3) in page
+    assert "WAV master" not in page  # path in DB but file gone: no broken link
+    assert "26.0 min" in page
+    assert "Render Test Episode" not in client.get("/episodes?status=in_progress").text
+
+    played = client.get(f"/episodes/{episode_id}/download/archive_mp3?inline=1")
+    assert played.status_code == 200 and played.headers["content-disposition"].startswith("inline")
+    saved = client.get(f"/episodes/{episode_id}/download/archive_mp3")
+    assert saved.headers["content-disposition"].startswith("attachment")

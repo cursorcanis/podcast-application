@@ -20,11 +20,26 @@ header {
   color: #fff;
   padding: 14px 24px;
   display: flex;
-  align-items: baseline;
-  gap: 24px;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px 28px;
 }
 header h1 { margin: 0; font-size: 20px; }
-header nav a { color: #cbd5e1; text-decoration: none; font-size: 14px; }
+.main-nav { display: flex; flex-wrap: wrap; gap: 8px; }
+.main-nav a {
+  color: #e2e8f0;
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 7px 14px;
+  border: 1px solid #475569;
+  border-radius: 8px;
+  background: #1e293b;
+  transition: background .15s, border-color .15s;
+}
+.main-nav a:hover { background: #334155; border-color: #94a3b8; color: #fff; }
+.main-nav a:focus-visible { outline: 2px solid #93c5fd; outline-offset: 2px; }
+.main-nav a.active { background: #f8fafc; border-color: #f8fafc; color: #0f172a; }
 main { max-width: 960px; margin: 24px auto; padding: 0 16px; }
 .banner {
   padding: 10px 14px;
@@ -116,6 +131,8 @@ button.chip {
   margin-right: 4px;
 }
 button.danger { background: var(--bad); }
+button.secondary { background: #e2e8f0; color: #334155; }
+button.secondary:hover { background: #cbd5e1; }
 form.inline { display: inline; margin-right: 6px; }
 form.inline button { margin-right: 6px; }
 .table { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 10px; }
@@ -168,10 +185,66 @@ form.inline button { margin-right: 6px; }
 .sw.pending, .cell.pending { background: #d5dde7; }
 .sw.failed, .cell.failed { background: var(--bad); }
 .map-tip { min-height: 18px; margin-top: 8px; }
-.dash-cancel { margin-top: 14px; }
+.dash-controls { margin-top: 14px; }
+.dash-controls p { margin: 0 0 8px; }
+.dash-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.dash-buttons form { margin: 0; }
 details.card summary { cursor: pointer; }
 details.card .table { width: 100%; margin-top: 10px; font-size: 13px; border-collapse: collapse; }
 @media (max-width: 560px) {
   .tiles { grid-template-columns: repeat(2, 1fr); }
   .dash-progress { flex-direction: column; align-items: stretch; gap: 8px; }
 }
+
+/* ---- Rendering shortcuts: header dot, Status callout, button-styled links ---- */
+.live-dot {
+  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  background: #22c55e; margin-right: 7px; vertical-align: 1px;
+  box-shadow: 0 0 0 0 rgba(34,197,94,.6); animation: live-ping 1.6s ease-out infinite;
+}
+@keyframes live-ping { 70% { box-shadow: 0 0 0 7px rgba(34,197,94,0); } 100% { box-shadow: 0 0 0 0 rgba(34,197,94,0); } }
+@media (prefers-reduced-motion: reduce) { .live-dot { animation: none; } }
+.button-link {
+  display: inline-block; background: #1d4ed8; color: #fff; text-decoration: none;
+  font-weight: 600; font-size: 14px; padding: 9px 16px; border-radius: 8px; white-space: nowrap;
+}
+.button-link:hover { background: #1e40af; }
+.render-callout {
+  display: flex; align-items: center; gap: 20px; text-decoration: none; color: var(--fg);
+  border: 2px solid #1d4ed8; background: #f3f7ff;
+}
+.render-callout:hover { background: #e8f0ff; }
+.render-callout.stalled { border-color: var(--bad); background: #fdf2f4; }
+.render-callout-text { flex: 1; min-width: 0; }
+.render-callout .progress-track { margin: 10px 0 6px; height: 10px; }
+@media (max-width: 560px) { .render-callout { flex-direction: column; align-items: stretch; } }
+
+/* ---- Episode Library: filter tabs, player, file buttons ---- */
+.tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 16px; }
+.tabs a {
+  text-decoration: none; color: var(--fg); font-size: 14px; font-weight: 600;
+  padding: 7px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--card);
+}
+.tabs a:hover { border-color: #94a3b8; }
+.tabs a.active { background: #0f172a; border-color: #0f172a; color: #fff; }
+.tabs .count {
+  display: inline-block; min-width: 20px; padding: 0 6px; margin-left: 4px; border-radius: 999px;
+  background: #e8edf3; color: var(--muted); font-size: 12px; text-align: center;
+}
+.tabs a.active .count { background: #334155; color: #e2e8f0; }
+.episode-row-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.episode-row-head h3 { margin: 0; }
+.episode-row-head .status-pill { padding: 3px 10px; font-size: 12px; white-space: nowrap; }
+.status-pill.status-delivered, .status-pill.status-delivered_paused, .status-pill.status-ready { background: #dff2e6; color: var(--ok); }
+.status-pill.status-rendering, .status-pill.status-script_ready, .status-pill.status-postproduction, .status-pill.status-qa { background: #e0ecff; color: #1d4ed8; }
+.status-pill.status-qa_failed, .status-pill.status-failed { background: #fde7ec; color: var(--bad); }
+.episode-player { display: block; width: 100%; margin: 10px 0 8px; }
+.file-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.file-button {
+  text-decoration: none; color: var(--fg) !important; font-size: 13px; font-weight: 600;
+  padding: 6px 12px; border: 1px solid var(--border); border-radius: 8px; background: #fbfcfe;
+}
+.file-button:hover { border-color: #1d4ed8; background: #f3f7ff; text-decoration: none !important; }
+.file-paths { margin-top: 10px; }
+.file-paths summary { cursor: pointer; }
+.file-paths code { font-size: 12px; overflow-wrap: anywhere; }

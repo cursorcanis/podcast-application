@@ -3,32 +3,59 @@
 {% block content %}
 
 <h2>Episode Library</h2>
-<p class="meta">
-  <a href="/episodes">All</a> ·
-  <a href="/episodes?status=sources_pending_approval">Awaiting source approval</a> ·
-  <a href="/episodes?status=sources_approved">Sources approved</a> ·
-  <a href="/episodes?status=script_ready">Script ready</a> ·
-  <a href="/episodes?status=rendering">Rendering</a> ·
-  <a href="/episodes?status=rendered">Rendered</a>
-</p>
+<nav class="tabs" aria-label="Filter episodes">
+  <a href="/episodes" class="{{ 'active' if not status_filter }}">All <span class="count">{{ group_counts.all }}</span></a>
+  {% for key, (label, _statuses) in groups.items() %}
+  <a href="/episodes?status={{ key }}" class="{{ 'active' if status_filter == key }}">
+    {{ label }} <span class="count">{{ group_counts[key] }}</span></a>
+  {% endfor %}
+</nav>
 
 {% if not episodes %}
 <div class="card">
-  <p>No episodes yet. <a href="/episodes/new">Create one</a>.</p>
+  {% if status_filter %}
+  <p>No episodes here. <a href="/episodes">Show all episodes</a>.</p>
+  {% else %}
+  <p>No episodes yet. <a href="/upload">Upload a script</a> to make one.</p>
+  {% endif %}
 </div>
 {% endif %}
 
 {% for ep in episodes %}
 <div class="card episode-row">
-  <h3><a href="/episodes/{{ ep.id }}">{{ ep.title }}</a></h3>
+  <div class="episode-row-head">
+    <h3><a href="/episodes/{{ ep.id }}">{{ ep.title }}</a></h3>
+    <span class="status-pill status-{{ ep.status }}">{{ ep.status|replace('_', ' ') }}</span>
+  </div>
   <p class="meta">
-    <span class="status-pill status-{{ ep.status }}">{{ ep.status }}</span>
-    · {{ ep.format }} · {{ ep.length_minutes_target }} min · speed {{ ep.speed }}x
-    · sources: {{ ep.source_counts.approved or 0 }} approved /
-      {{ ep.source_counts.pending or 0 }} pending /
-      {{ ep.source_counts.removed or 0 }} removed
+    {% if ep.measured_duration_seconds %}{{ (ep.measured_duration_seconds / 60)|round(1) }} min
+    {% else %}{{ ep.length_minutes_target }} min target{% endif %}
+    · {{ ep.format }} · speed {{ ep.speed }}x
+    {% if ep.qa_status %} · QA {{ ep.qa_status }}{% endif %}
+    · created {{ ep.created_at[:10] }}
   </p>
+
+  {% if ep.audio_files %}
+  {% set listen = ep.audio_files[0] %}
+  <audio class="episode-player" controls preload="none"
+         src="/episodes/{{ ep.id }}/download/{{ listen.kind }}?inline=1"></audio>
+  <div class="file-actions">
+    {% for f in ep.audio_files %}
+    <a class="file-button" href="/episodes/{{ ep.id }}/download/{{ f.kind }}" download>
+      &#8595; {{ f.label }} <span class="meta">{{ f.size_mb }} MB</span></a>
+    {% endfor %}
+  </div>
+  <details class="file-paths">
+    <summary class="meta">Where are the files on disk?</summary>
+    <ul>
+      {% for f in ep.audio_files %}<li><span class="meta">{{ f.label }}:</span> <code>{{ f.path }}</code></li>{% endfor %}
+    </ul>
+  </details>
+  {% elif ep.status in ('rendering', 'script_ready') %}
+  <p><a class="button-link" href="/episodes/{{ ep.id }}/render">Rendering &mdash; view live progress &rarr;</a></p>
+  {% else %}
   <p class="meta">{{ ep.topic_or_query }}</p>
+  {% endif %}
 </div>
 {% endfor %}
 

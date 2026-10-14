@@ -2,6 +2,35 @@
 {% block title %}Status / Settings — Podcast Foundry{% endblock %}
 {% block content %}
 
+{% if current_render %}
+<a class="card render-callout{% if current_render.stalled %} stalled{% endif %}" href="/episodes/{{ current_render.episode_id }}/render">
+  <div class="render-callout-text">
+    <div class="dash-kicker">
+      {% if current_render.stalled %}Render stalled — open it for details
+      {% elif current_render.status == 'running' %}<span class="live-dot"></span>Rendering now
+      {% else %}Render waiting for confirmation{% endif %}
+    </div>
+    <div class="dash-title">{{ current_render.title }}</div>
+    <div class="progress-track"><div class="progress-fill" style="width: {{ current_render.percent }}%"></div></div>
+    <div class="meta">
+      {{ current_render.done }} of {{ current_render.total }} chunks · {{ current_render.percent|round|int }}%
+      {% if current_render.status == 'running' and not current_render.stalled and current_render.remaining_seconds >= 60 %}
+      · about {{ (current_render.remaining_seconds / 60)|round|int }} min left{% endif %}
+      {% if queued_count %} · {{ queued_count }} more waiting in the queue{% endif %}
+    </div>
+  </div>
+  <span class="button-link">Open rendering screen &rarr;</span>
+</a>
+{% elif queued_count %}
+<a class="card render-callout" href="/rendering">
+  <div class="render-callout-text">
+    <div class="dash-kicker">Rendering queue</div>
+    <div class="dash-title">{{ queued_count }} upload{{ 's' if queued_count != 1 }} waiting to render</div>
+  </div>
+  <span class="button-link">Open rendering screen &rarr;</span>
+</a>
+{% endif %}
+
 <div class="banner budget">
   MONTHLY BUDGET ${{ settings.monthly_budget }} — free/open resources only, no paid services.
 </div>

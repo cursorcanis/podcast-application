@@ -63,10 +63,40 @@
   <div class="chunk-map" id="dash-map" aria-label="One square per chunk, coloured by status"></div>
   <div class="map-tip meta" id="dash-tip">Hover a square to see that chunk.</div>
 
-  {% if show_cancel %}
-  <form method="post" action="/episodes/{{ dash_episode_id }}/render/cancel" class="dash-cancel">
-    <button type="submit" class="danger">Cancel render</button>
-  </form>
+  {% if dash_job_status in ('running', 'held', 'cancelled', 'failed') %}
+  {% set q = "?back=" ~ (dash_back | urlencode) %}
+  {% set base = "/episodes/" ~ dash_episode_id ~ "/render/" %}
+  <div class="dash-controls">
+    {% if dash_job_status == 'held' %}
+    <p class="meta">
+      On hold. The chunks already rendered are kept, ComfyUI's models are unloaded and the GPU is
+      free. Nothing else renders until you resume or discard this one.
+    </p>
+    {% elif dash_job_status in ('cancelled', 'failed') %}
+    <p class="meta">This render is stopped. Its finished chunks are still saved on disk.</p>
+    {% endif %}
+    <div class="dash-buttons">
+      {% if dash_job_status == 'running' %}
+      <form method="post" action="{{ base }}hold{{ q }}">
+        <button type="submit" title="Pause now and keep every finished chunk">Hold</button>
+      </form>
+      <form method="post" action="{{ base }}cancel{{ q }}">
+        <button type="submit" class="secondary"
+                title="Stop and keep finished chunks; the next queued episode starts">Stop</button>
+      </form>
+      {% elif dash_job_status == 'held' %}
+      <form method="post" action="{{ base }}resume{{ q }}">
+        <button type="submit">Resume</button>
+      </form>
+      {% endif %}
+      <form method="post" action="{{ base }}discard{{ q }}"
+            onsubmit="return confirm('Discard this render? Every saved chunk file is deleted and the episode goes back to the start.');">
+        <button type="submit" class="danger">
+          {{ "Stop and discard" if dash_job_status == 'running' else "Discard saved render" }}
+        </button>
+      </form>
+    </div>
+  </div>
   {% endif %}
 </section>
 
