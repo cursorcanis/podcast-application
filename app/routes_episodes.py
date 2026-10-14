@@ -20,7 +20,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from . import delivery, episodes, settings
+from . import cleanup, delivery, episodes, render, settings
 from .config import config
 from .web import templates
 
@@ -37,6 +37,9 @@ def episodes_library(request: Request):
     rows = episodes.list_episodes(status_filter)
     for ep in rows:
         ep["audio_files"] = _audio_files(ep)
+        ep["files_mb"] = round(sum(f["size_mb"] for f in ep["audio_files"]), 1)
+        job = render.get_latest_job_for_episode(ep["id"])
+        ep["render_job_status"] = job["status"] if job else None
     return templates.TemplateResponse(
         request=request,
         name="episodes_list.html",
@@ -45,8 +48,31 @@ def episodes_library(request: Request):
             "status_filter": status_filter,
             "groups": episodes.LIBRARY_GROUPS,
             "group_counts": episodes.library_group_counts(),
+            "notice": request.query_params.get("notice"),
+            "error": request.query_params.get("error"),
+            "back": str(request.url.path) + (f"?{request.url.query}" if request.url.query else ""),
         },
     )
+
+
+@router.post("/episodes/{episode_id}/delete")
+def delete_episode(episode_id: int, back: str = "/episodes"):
+    if not (back == "/episodes" or back.startswith("/episodes?")) or "//" in back:
+        back = "/episodes"
+    back = back.split("?")[0] + "?" + "&".join(
+        p for p in (back.split("?", 1)[1] if "?" in back else "").split("&")
+        if p.startswith("status=")
+    )
+    try:
+        result = cleanup.delete_episode(episode_id)
+    except cleanup.CleanupError as exc:
+        return RedirectResponse(url=f"{back}&error={quote(str(exc))}", status_code=303)
+    notice = (
+        f"Deleted “{result['title']}” — {result['files_deleted']} file(s), "
+        f"{result['bytes_freed'] / 1_000_000:.1f} MB freed"
+        + (", render stopped and ComfyUI memory released." if result["stopped_render"] else ".")
+    )
+    return RedirectResponse(url=f"{back}&notice={quote(notice)}", status_code=303)
 
 
 _AUDIO_KINDS = (

@@ -32,7 +32,7 @@ def _back(request: Request, episode_id: int) -> str:
     """Where a render control returns to: the page it was pressed on (the
     queued episode's render page shows the active job's controls too)."""
     back = request.query_params.get("back", "")
-    if back.startswith("/episodes/") and "//" not in back:
+    if (back == "/episodes" or back.startswith(("/episodes/", "/episodes?"))) and "//" not in back:
         return back
     return f"/episodes/{episode_id}/render"
 

@@ -11,6 +11,9 @@
   {% endfor %}
 </nav>
 
+{% if notice %}<div class="banner ok">{{ notice }}</div>{% endif %}
+{% if error %}<div class="banner error">{{ error }}</div>{% endif %}
+
 {% if not episodes %}
 <div class="card">
   {% if status_filter %}
@@ -51,11 +54,31 @@
       {% for f in ep.audio_files %}<li><span class="meta">{{ f.label }}:</span> <code>{{ f.path }}</code></li>{% endfor %}
     </ul>
   </details>
-  {% elif ep.status in ('rendering', 'script_ready') %}
+  {% elif ep.render_job_status in ('running', 'held', 'awaiting_cap_confirmation') %}
   <p><a class="button-link" href="/episodes/{{ ep.id }}/render">Rendering &mdash; view live progress &rarr;</a></p>
+  {% elif ep.status in ('rendering', 'script_ready') %}
+  <p><a class="button-link" href="/episodes/{{ ep.id }}/render">Open render page &rarr;</a></p>
   {% else %}
   <p class="meta">{{ ep.topic_or_query }}</p>
   {% endif %}
+
+  {% set rendering_now = ep.render_job_status in ('running', 'held', 'awaiting_cap_confirmation') %}
+  <div class="row-actions">
+    {% if rendering_now %}
+    <form method="post" action="/episodes/{{ ep.id }}/render/discard?back={{ back|urlencode }}"
+          onsubmit="return confirm({{ ('Stop rendering “' ~ ep.title ~ '”?
+
+The render stops now, every chunk it has made so far is deleted, and ComfyUI unloads its models to free GPU memory. The script is kept, so you can render it again later.')|tojson|forceescape }});">
+      <button type="submit" class="secondary">&#9632; Stop rendering</button>
+    </form>
+    {% endif %}
+    <form method="post" action="/episodes/{{ ep.id }}/delete?back={{ back|urlencode }}"
+          onsubmit="return confirm({{ ('Delete “' ~ ep.title ~ '”?
+
+' ~ ('This stops its render, ' if rendering_now else '') ~ 'Removes the episode from the library and deletes its audio files from disk' ~ (' (' ~ ep.files_mb ~ ' MB)' if ep.files_mb else '') ~ ', including the copy in the share folder. This cannot be undone.')|tojson|forceescape }});">
+      <button type="submit" class="danger">&#128465; Delete episode</button>
+    </form>
+  </div>
 </div>
 {% endfor %}
 

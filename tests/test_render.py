@@ -504,3 +504,78 @@ def test_library_lists_finished_episode_with_player_and_downloads(client, tmp_pa
     assert played.status_code == 200 and played.headers["content-disposition"].startswith("inline")
     saved = client.get(f"/episodes/{episode_id}/download/archive_mp3")
     assert saved.headers["content-disposition"].startswith("attachment")
+
+
+def _finished_episode_with_files(client, out_root, share_root, title_script="[HOST_A] Done already."):
+    episode_id = _create_episode_to_script_ready(client, title_script)
+    out_dir = out_root / f"2026-10-14_render-test-episode"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    files = {}
+    for column, name in (("wav_master_path", "ep_master.wav"), ("archive_mp3_path", "ep_archive_192k.mp3"),
+                         ("email_mp3_path", "ep_email_96k.mp3")):
+        f = out_dir / name
+        f.write_bytes(b"\0" * 5000)
+        files[column] = str(f)
+    share_copy = share_root / f"render-test-episode_ep_email_96k.mp3"
+    share_copy.write_bytes(b"\0" * 5000)
+    conn = db.get_connection()
+    conn.execute(
+        "UPDATE episodes SET status='delivered', output_dir=?, wav_master_path=?, archive_mp3_path=?, "
+        "email_mp3_path=? WHERE id=?",
+        (str(out_dir), files["wav_master_path"], files["archive_mp3_path"], files["email_mp3_path"], episode_id),
+    )
+    conn.commit()
+    conn.close()
+    return episode_id, out_dir, share_copy
+
+
+def test_delete_episode_removes_files_rows_and_share_copy(client, tmp_path, monkeypatch):
+    out_root, share_root = tmp_path / "out", tmp_path / "share"
+    share_root.mkdir()
+    monkeypatch.setitem(config.values, "OUTPUT_FOLDER", str(out_root))
+    monkeypatch.setitem(config.values, "SHARE_LOCATION", str(share_root))
+    monkeypatch.setattr(comfyui, "free_memory", lambda url: None)
+    outside = tmp_path / "not_ours.mp3"
+    outside.write_bytes(b"keep me")
+
+    episode_id, out_dir, share_copy = _finished_episode_with_files(client, out_root, share_root)
+    keep_id, _, _ = _finished_episode_with_files(client, out_root, share_root)  # same folder
+    conn = db.get_connection()
+    conn.execute("UPDATE episodes SET wav_master_path = ? WHERE id = ?", (str(outside), episode_id))
+    conn.commit()
+    conn.close()
+
+    # Another episode still points at the same folder/files: nothing shared goes.
+    resp = client.post(f"/episodes/{episode_id}/delete?back=/episodes?status=finished", follow_redirects=False)
+    assert resp.status_code == 303 and "status=finished" in resp.headers["location"]
+    assert "notice=" in resp.headers["location"]
+    assert episodes.get_episode(episode_id) is None
+    assert out_dir.is_dir() and share_copy.exists()
+    assert outside.exists()  # outside OUTPUT_FOLDER: never deleted
+
+    # Last owner: folder, files and share copy are all removed.
+    client.post(f"/episodes/{keep_id}/delete")
+    assert episodes.get_episode(keep_id) is None
+    assert not out_dir.exists() and not share_copy.exists()
+    conn = db.get_connection()
+    assert conn.execute("SELECT COUNT(*) FROM render_jobs WHERE episode_id IN (?, ?)", (episode_id, keep_id)).fetchone()[0] == 0
+    conn.close()
+
+
+def test_delete_stops_a_running_render_and_library_offers_stop(client, monkeypatch):
+    episode_id = _create_episode_to_script_ready(client, "[HOST_A] One turn. [HOST_B] Another.")
+    monkeypatch.setattr(comfyui, "submit_prompt", lambda url, prompt, client_id: "prompt-x")
+    stopped = []
+    monkeypatch.setattr(comfyui, "cancel_prompt", lambda url, pid: stopped.append(pid))
+    monkeypatch.setattr(comfyui, "free_memory", lambda url: stopped.append("free"))
+    render.start_render_job(episode_id)
+
+    page = client.get("/episodes").text
+    assert f'action="/episodes/{episode_id}/render/discard?back=' in page
+    assert "Stop rendering" in page and "Delete episode" in page
+
+    resp = client.post(f"/episodes/{episode_id}/delete", follow_redirects=False)
+    assert "render%20stopped" in resp.headers["location"]
+    assert "free" in stopped
+    assert episodes.get_episode(episode_id) is None
+    assert render.get_system_active_job() is None  # GPU slot released for the queue

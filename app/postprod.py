@@ -232,8 +232,25 @@ def _export_mp3(src_wav: Path, dst_mp3: Path, *, bitrate_k: int, channels: int, 
 
 
 def episode_output_dir(episode: dict) -> Path:
+    """The episode's own mastering folder. Re-mastering reuses the folder it
+    already has. A new folder is <date>_<title-slug>, unless another episode
+    already owns that name (same title, same day) — then `_ep<id>` is added,
+    so one episode's export can never overwrite another's."""
+    if episode.get("output_dir"):
+        return Path(episode["output_dir"])
     date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    return Path(config.output_folder) / f"{date_str}_{slugify(episode['title'])}"
+    out_dir = Path(config.output_folder) / f"{date_str}_{slugify(episode['title'])}"
+    conn = get_connection()
+    try:
+        taken = conn.execute(
+            "SELECT 1 FROM episodes WHERE output_dir = ? AND id != ?",
+            (str(out_dir), episode.get("id")),
+        ).fetchone()
+    finally:
+        conn.close()
+    if taken:
+        out_dir = out_dir.with_name(f"{out_dir.name}_ep{episode['id']}")
+    return out_dir
 
 
 def run_postproduction(episode_id: int) -> dict[str, Any]:

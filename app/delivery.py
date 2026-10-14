@@ -117,7 +117,12 @@ def _share_dest(episode: dict) -> Path:
             f"SHARE_LOCATION does not exist on disk: {config.share_location}. "
             "Create it (or correct the env var / config) before delivery can hand off a file."
         )
-    dest = share_dir / f"{slugify(episode['title'])}_{src_path.name}"
+    # An episode mastered into an `_ep<id>` folder (its title clashed with
+    # another episode's) gets the same marker here, so their share copies
+    # don't overwrite each other either.
+    marker = f"_ep{episode['id']}"
+    suffix = marker if src_path.parent.name.endswith(marker) else ""
+    dest = share_dir / f"{slugify(episode['title'])}{suffix}_{src_path.name}"
     return dest
 
 
