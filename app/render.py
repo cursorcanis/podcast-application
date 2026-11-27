@@ -704,6 +704,20 @@ def _resolve_output_path(subfolder: str, filename: str) -> str:
     return str(base / rel / filename) if rel else str(base / filename)
 
 
+def _fetch_output_file(subfolder: str, filename: str) -> str:
+    """Resolve the local path of a finished output and make sure it exists.
+
+    When ComfyUI runs on this machine, SaveAudio has already written the file
+    under OUTPUT_FOLDER and this is just _resolve_output_path. When ComfyUI is
+    remote (another machine over Tailscale), the file only exists there, so it
+    is downloaded through /view into the same local path. Raises
+    comfyui.ComfyUIError if the download fails."""
+    output_path = _resolve_output_path(subfolder, filename)
+    if not Path(output_path).is_file():
+        comfyui.download_output(config.comfyui_url, subfolder, filename, output_path)
+    return output_path
+
+
 def _extract_output_file(outputs: dict, save_node_id: str) -> tuple[str, str] | None:
     node_outputs = outputs.get(save_node_id) or {}
     for value in node_outputs.values():
@@ -965,7 +979,15 @@ def _run_job(job_id: int) -> None:
                     conn.commit()
                     continue
                 subfolder, filename = output
-                output_path = _resolve_output_path(subfolder, filename)
+                try:
+                    output_path = _fetch_output_file(subfolder, filename)
+                except comfyui.ComfyUIError as exc:
+                    conn.execute(
+                        "UPDATE render_chunks SET status = 'failed', error_detail = ? WHERE id = ?",
+                        (f"Rendered, but could not fetch the output file: {exc}", chunk["id"]),
+                    )
+                    conn.commit()
+                    continue
                 if _hit_length_ceiling(output_path, max_audio_seconds):
                     # Chatterbox stopped at its max_new_tokens ceiling, so the
                     # end of this chunk's text was never spoken (or it ran on

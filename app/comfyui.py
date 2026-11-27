@@ -150,6 +150,33 @@ def cancel_prompt(url: str, prompt_id: str) -> None:
         pass
 
 
+OUTPUT_DOWNLOAD_TIMEOUT_S = 120.0
+
+
+def download_output(url: str, subfolder: str, filename: str, dest_path: str) -> None:
+    """GET /view for one output file and write it to dest_path.
+
+    Used only when ComfyUI runs on another machine (e.g. reached over a
+    Tailscale/SSH tunnel), so SaveAudio's file is not on this machine's disk.
+    Raises ComfyUIError with the exact detail on failure."""
+    view_url = f"{url.rstrip('/')}/view"
+    params = {"filename": filename, "subfolder": subfolder or "", "type": "output"}
+    try:
+        with httpx.Client(timeout=OUTPUT_DOWNLOAD_TIMEOUT_S) as client:
+            resp = client.get(view_url, params=params)
+    except httpx.HTTPError as exc:
+        raise ComfyUIError(f"GET {view_url} failed: {type(exc).__name__}: {exc}") from exc
+    if resp.status_code >= 400:
+        raise ComfyUIError(f"GET {view_url} {params} -> HTTP {resp.status_code}: {resp.text[:500]}")
+    from pathlib import Path
+
+    dest = Path(dest_path)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_suffix(dest.suffix + ".part")
+    tmp.write_bytes(resp.content)
+    tmp.replace(dest)
+
+
 def free_memory(url: str) -> None:
     """Best-effort: ask ComfyUI to unload its models and release VRAM/RAM, so
     a render put on hold doesn't keep Chatterbox resident while the GPU is

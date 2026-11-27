@@ -43,7 +43,7 @@ from typing import Any
 from . import comfyui, workflow
 from .config import config
 from .db import get_connection
-from .render import _extract_output_file, _resolve_output_path, get_system_active_job
+from .render import _extract_output_file, _fetch_output_file, get_system_active_job
 
 # ~56 words ≈ 20–25s of speech at ~150 wpm — a short audition line, not a
 # scripted sample with editorial meaning. Kept constant so every profile is
@@ -360,7 +360,11 @@ def _run_sample(profile_id: int, voice_ref: str) -> None:
         )
         return
     subfolder, filename = output
-    output_path = _resolve_output_path(subfolder, filename)
+    try:
+        output_path = _fetch_output_file(subfolder, filename)
+    except comfyui.ComfyUIError as exc:
+        finish(status="failed", error_detail=f"Rendered, but could not fetch the output file: {exc}")
+        return
 
     conn = get_connection()
     try:

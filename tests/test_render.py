@@ -579,3 +579,37 @@ def test_delete_stops_a_running_render_and_library_offers_stop(client, monkeypat
     assert "free" in stopped
     assert episodes.get_episode(episode_id) is None
     assert render.get_system_active_job() is None  # GPU slot released for the queue
+
+
+# --- Remote ComfyUI: output fetched over /view -----------------------------------
+
+def test_fetch_output_file_uses_local_file_when_present(tmp_path, monkeypatch):
+    monkeypatch.setitem(config.values, "OUTPUT_FOLDER", str(tmp_path))
+    local = tmp_path / "ep1_job1" / "chunk_0001_00001_.flac"
+    local.parent.mkdir(parents=True)
+    local.write_bytes(b"local")
+
+    def no_download(*args, **kwargs):
+        raise AssertionError("must not download when the file is already on disk")
+
+    monkeypatch.setattr(comfyui, "download_output", no_download)
+    path = render._fetch_output_file("podcast_foundry\\ep1_job1", "chunk_0001_00001_.flac")
+    assert path == str(local)
+
+
+def test_fetch_output_file_downloads_from_remote_comfyui(tmp_path, monkeypatch):
+    monkeypatch.setitem(config.values, "OUTPUT_FOLDER", str(tmp_path))
+    monkeypatch.setitem(config.values, "COMFYUI_URL", "http://remote:8191")
+    calls = []
+
+    def fake_download(url, subfolder, filename, dest):
+        calls.append((url, subfolder, filename))
+        from pathlib import Path
+        Path(dest).parent.mkdir(parents=True, exist_ok=True)
+        Path(dest).write_bytes(b"remote")
+
+    monkeypatch.setattr(comfyui, "download_output", fake_download)
+    path = render._fetch_output_file("podcast_foundry\\ep2_job3", "chunk_0004_00001_.flac")
+    assert calls == [("http://remote:8191", "podcast_foundry\\ep2_job3", "chunk_0004_00001_.flac")]
+    assert path == str(tmp_path / "ep2_job3" / "chunk_0004_00001_.flac")
+    assert (tmp_path / "ep2_job3" / "chunk_0004_00001_.flac").read_bytes() == b"remote"
