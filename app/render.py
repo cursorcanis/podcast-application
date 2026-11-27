@@ -708,12 +708,13 @@ def _fetch_output_file(subfolder: str, filename: str) -> str:
     """Resolve the local path of a finished output and make sure it exists.
 
     When ComfyUI runs on this machine, SaveAudio has already written the file
-    under OUTPUT_FOLDER and this is just _resolve_output_path. When ComfyUI is
-    remote (another machine over Tailscale), the file only exists there, so it
-    is downloaded through /view into the same local path. Raises
+    under OUTPUT_FOLDER and this is just _resolve_output_path. With
+    COMFYUI_REMOTE_OUTPUT on (ComfyUI on another machine, e.g. over
+    Tailscale), a file missing locally is downloaded through /view into the
+    same local path. Raises
     comfyui.ComfyUIError if the download fails."""
     output_path = _resolve_output_path(subfolder, filename)
-    if not Path(output_path).is_file():
+    if config.comfyui_remote_output and not Path(output_path).is_file():
         comfyui.download_output(config.comfyui_url, subfolder, filename, output_path)
     return output_path
 

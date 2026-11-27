@@ -36,6 +36,7 @@ ENV_ONLY_KEYS = frozenset({"SMTP_USER", "SMTP_PASS"})
 OVERRIDABLE_KEYS = frozenset(
     {
         "COMFYUI_URL",
+        "COMFYUI_REMOTE_OUTPUT",
         "MAX_RENDER_HOURS",
         "CHUNK_TIMEOUT_MIN",
         "MAX_ATTACHMENT_MB",
@@ -88,6 +89,17 @@ class Config:
     def default_recipients(self) -> list[str]:
         val = self.values.get("DEFAULT_RECIPIENTS") or []
         return [str(x) for x in val]
+
+    @property
+    def comfyui_remote_output(self) -> bool:
+        """True when ComfyUI runs on another machine (e.g. over a Tailscale
+        SSH tunnel), so its SaveAudio files are not on this disk and must be
+        downloaded through /view. Off by default: a local ComfyUI writes
+        straight into OUTPUT_FOLDER."""
+        val = self.values.get("COMFYUI_REMOTE_OUTPUT", False)
+        if isinstance(val, str):
+            return val.strip().lower() in ("1", "true", "yes")
+        return bool(val)
 
     @property
     def output_folder(self) -> str:

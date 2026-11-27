@@ -585,6 +585,7 @@ def test_delete_stops_a_running_render_and_library_offers_stop(client, monkeypat
 
 def test_fetch_output_file_uses_local_file_when_present(tmp_path, monkeypatch):
     monkeypatch.setitem(config.values, "OUTPUT_FOLDER", str(tmp_path))
+    monkeypatch.setitem(config.values, "COMFYUI_REMOTE_OUTPUT", True)
     local = tmp_path / "ep1_job1" / "chunk_0001_00001_.flac"
     local.parent.mkdir(parents=True)
     local.write_bytes(b"local")
@@ -600,6 +601,7 @@ def test_fetch_output_file_uses_local_file_when_present(tmp_path, monkeypatch):
 def test_fetch_output_file_downloads_from_remote_comfyui(tmp_path, monkeypatch):
     monkeypatch.setitem(config.values, "OUTPUT_FOLDER", str(tmp_path))
     monkeypatch.setitem(config.values, "COMFYUI_URL", "http://remote:8191")
+    monkeypatch.setitem(config.values, "COMFYUI_REMOTE_OUTPUT", True)
     calls = []
 
     def fake_download(url, subfolder, filename, dest):
@@ -613,3 +615,15 @@ def test_fetch_output_file_downloads_from_remote_comfyui(tmp_path, monkeypatch):
     assert calls == [("http://remote:8191", "podcast_foundry\\ep2_job3", "chunk_0004_00001_.flac")]
     assert path == str(tmp_path / "ep2_job3" / "chunk_0004_00001_.flac")
     assert (tmp_path / "ep2_job3" / "chunk_0004_00001_.flac").read_bytes() == b"remote"
+
+
+def test_fetch_output_file_never_downloads_when_comfyui_is_local(tmp_path, monkeypatch):
+    monkeypatch.setitem(config.values, "OUTPUT_FOLDER", str(tmp_path))
+    monkeypatch.setitem(config.values, "COMFYUI_REMOTE_OUTPUT", False)
+
+    def no_download(*args, **kwargs):
+        raise AssertionError("local ComfyUI: must not download")
+
+    monkeypatch.setattr(comfyui, "download_output", no_download)
+    path = render._fetch_output_file("podcast_foundry\\ep1_job1", "missing.flac")
+    assert path == str(tmp_path / "ep1_job1" / "missing.flac")

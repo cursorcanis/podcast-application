@@ -23,4 +23,7 @@ def _isolated_db(tmp_path, monkeypatch):
     # The machine's .env may point COMFYUI_URL at the live ComfyUI (8189 here).
     # Tests assume the documented default and must never reach a real one.
     monkeypatch.setitem(config.values, "COMFYUI_URL", "http://127.0.0.1:8188")
+    # Likewise a remote-render .env (COMFYUI_REMOTE_OUTPUT=true) must not make
+    # tests try to download fake chunk files from that URL.
+    monkeypatch.setitem(config.values, "COMFYUI_REMOTE_OUTPUT", False)
     yield

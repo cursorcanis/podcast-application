@@ -162,7 +162,7 @@ def download_output(url: str, subfolder: str, filename: str, dest_path: str) -> 
     view_url = f"{url.rstrip('/')}/view"
     params = {"filename": filename, "subfolder": subfolder or "", "type": "output"}
     try:
-        with httpx.Client(timeout=OUTPUT_DOWNLOAD_TIMEOUT_S) as client:
+        with httpx.Client(timeout=httpx.Timeout(OUTPUT_DOWNLOAD_TIMEOUT_S, connect=10.0)) as client:
             resp = client.get(view_url, params=params)
     except httpx.HTTPError as exc:
         raise ComfyUIError(f"GET {view_url} failed: {type(exc).__name__}: {exc}") from exc
