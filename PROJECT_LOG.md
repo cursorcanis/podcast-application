@@ -178,3 +178,9 @@ render worker + resume for episode 8); `app_console.log` (Oct 6 console);
 - Lesson: the tunnel and app must outlive the Claude session (run them from a normal terminal / `start_app.bat`), or the render stalls.
 - 11-27 fix: the first version downloaded whenever a file was missing, which hung `test_render`/`test_upload_autopilot` (fake chunks have no file; `127.0.0.1:8188` hangs on this PC). The download is now behind `COMFYUI_REMOTE_OUTPUT` (default false; `.env` sets true for alea-nvidia), `conftest.py` pins it off, and there's a 10 s connect timeout. Full suite **109 passed** (WSL `.venv`, 194 s). Branch `feat/remote-comfyui-alea-nvidia`, PR #2.
 - Details and restart steps: `HANDOFF_2026-11-27.md`.
+
+### 2026-11-27 -> 11-28 — Episode 18 delivered; email-size bug found (Claude Code, Opus 5.5, WSL)
+- Episode 18 rendered all 107 chunks on alea-nvidia, and mastering and QA passed (1637.4 s). The autopilot's email of the 96 kbps copy (19.6 MB) failed with `SMTPServerDisconnected`. The likely cause is Gmail's 25 MB limit after base64 (about 26 MB); this is inferred, not proven. Made a 64 kbps copy with `postprod._export_mp3` (13.1 MB), pointed `email_mp3_path` at it, and resent through `POST /episodes/18/delivery/resend`. delivery_records id 8 is `sent` 13:20 UTC.
+- Bug, not fixed yet: `postprod.email_bitrate_for()` and the size guard in `delivery.py` don't allow for base64 overhead, so episodes over about 25 min pick a bitrate that's too high for Gmail.
+- PR #2 is open, with a test-results comment (109 passed). The SSH tunnel dropped 11-27 after delivery. alea-nvidia was offline in Tailscale on 11-28.
+- Next steps: `HANDOFF_2026-11-29.md`.
