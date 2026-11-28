@@ -248,10 +248,13 @@ def _smtp_send(episode: dict, recipients: list[str], *, subject: str, body: str)
     if not mp3 or not Path(mp3).exists():
         raise DeliveryError(f"Email MP3 is missing: {mp3}. Export must complete before sending.")
 
-    size_mb = Path(mp3).stat().st_size / (1024 * 1024)
-    if size_mb > config.max_attachment_mb:
+    size_bytes = Path(mp3).stat().st_size
+    limit_bytes = config.email_attachment_limit_bytes
+    if size_bytes > limit_bytes:
         raise DeliveryError(
-            f"Email MP3 {mp3} is {size_mb:.1f}MB, over the MAX_ATTACHMENT_MB={config.max_attachment_mb} cap. "
+            f"Email MP3 {mp3} is {size_bytes / 1_000_000:.1f} MB, over the {limit_bytes / 1_000_000:.1f} MB "
+            f"email limit (the smaller of MAX_ATTACHMENT_MB={config.max_attachment_mb} and what fits in "
+            f"SMTP_MESSAGE_LIMIT_MB={config.smtp_message_limit_mb:g} after base64 encoding). "
             "Not sending — re-export at a lower bitrate or shorten the episode."
         )
 

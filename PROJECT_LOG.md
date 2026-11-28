@@ -184,3 +184,7 @@ render worker + resume for episode 8); `app_console.log` (Oct 6 console);
 - Bug, not fixed yet: `postprod.email_bitrate_for()` and the size guard in `delivery.py` don't allow for base64 overhead, so episodes over about 25 min pick a bitrate that's too high for Gmail.
 - PR #2 is open, with a test-results comment (109 passed). The SSH tunnel dropped 11-27 after delivery. alea-nvidia was offline in Tailscale on 11-28.
 - Next steps: `HANDOFF_2026-11-29.md`.
+
+### 2026-11-29 — App restarted on alea-nvidia; email-size bug fixed (Claude Code, Opus 5.5, WSL)
+- alea-nvidia back online. Started `PodcastFoundryComfyUI`, the tunnel on 8191 and the app on 8010 (`data/app_server_2026-11-29.log`). All main pages return 200, and `/api/comfyui/status` reports reachable, 0.46.0.
+- **Email-size fix (handoff task 1):** new `config.email_attachment_limit_bytes` = min(`MAX_ATTACHMENT_MB` MiB, `SMTP_MESSAGE_LIMIT_MB` (default 25) MB / (4/3 × 78/76) for base64 and line breaks) ≈ 18.27 MB for Gmail. `postprod.email_bitrate_for()` now takes that byte limit, and the delivery size guard uses it too. Checked on real files: ep 18's 96k file (19.6 MB) is now refused, and the 64k file is accepted. A 1637 s episode now gets 80 kbps (~22.4 MB encoded). Bitrate test expectations changed (33 min 80→64, 40 min 64→56), plus 2 new tests. Full suite **111 passed** (WSL `.venv`, 180 s). Not committed yet.

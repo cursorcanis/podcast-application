@@ -54,19 +54,21 @@ TARGET_TRUE_PEAK = -1.5
 TARGET_LRA = 11.0
 ARCHIVE_BITRATE_K = 192
 EMAIL_BITRATE_K = 96
-# A long episode's email copy steps down from 96 kbps until it fits under
-# MAX_ATTACHMENT_MB (a 33-minute episode at 96 kbps is ~23 MB). Mono speech
+# A long episode's email copy steps down from 96 kbps until it fits the email
+# attachment limit (config.email_attachment_limit_bytes: MAX_ATTACHMENT_MB and
+# the provider's limit after base64, ~18.3 MB on disk for Gmail). Mono speech
 # stays clear down to this floor.
 EMAIL_BITRATE_FLOOR_K = 40
 _EMAIL_BITRATE_STEPS_K = (96, 80, 64, 56, 48, EMAIL_BITRATE_FLOOR_K)
 _MP3_SIZE_HEADROOM = 0.95  # ID3 tags + frame overhead
 
 
-def email_bitrate_for(duration_seconds: float, max_mb: float) -> int:
+def email_bitrate_for(duration_seconds: float, limit_bytes: float) -> int:
     """Highest standard bitrate whose MP3 of `duration_seconds` fits inside
-    `max_mb`, never below EMAIL_BITRATE_FLOOR_K (delivery's own size guard
-    still catches anything that is too long even at the floor)."""
-    budget_bits = max_mb * 1024 * 1024 * 8 * _MP3_SIZE_HEADROOM
+    `limit_bytes` (normally config.email_attachment_limit_bytes), never below
+    EMAIL_BITRATE_FLOOR_K (delivery's own size guard still catches anything
+    that is too long even at the floor)."""
+    budget_bits = limit_bytes * 8 * _MP3_SIZE_HEADROOM
     for kbps in _EMAIL_BITRATE_STEPS_K:
         if kbps * 1000 * duration_seconds <= budget_bits:
             return kbps
@@ -320,7 +322,7 @@ def run_postproduction(episode_id: int) -> dict[str, Any]:
         archive_mp3_path = out_dir / f"{slug}_archive_192k.mp3"
         _export_mp3(wav_master_path, archive_mp3_path, bitrate_k=ARCHIVE_BITRATE_K, channels=2, tags=tags)
 
-        email_kbps = email_bitrate_for(duration_seconds, config.max_attachment_mb)
+        email_kbps = email_bitrate_for(duration_seconds, config.email_attachment_limit_bytes)
         email_mp3_path = out_dir / f"{slug}_email_{email_kbps}k.mp3"
         _export_mp3(wav_master_path, email_mp3_path, bitrate_k=email_kbps, channels=1, tags=tags)
     except PostprodError:

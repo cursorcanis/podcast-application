@@ -40,6 +40,7 @@ OVERRIDABLE_KEYS = frozenset(
         "MAX_RENDER_HOURS",
         "CHUNK_TIMEOUT_MIN",
         "MAX_ATTACHMENT_MB",
+        "SMTP_MESSAGE_LIMIT_MB",
         "OUTPUT_FOLDER",
         "SHARE_LOCATION",
         "DEFAULT_RECIPIENTS",
@@ -76,6 +77,26 @@ class Config:
     @property
     def max_attachment_mb(self) -> int:
         return int(self.values.get("MAX_ATTACHMENT_MB", 20))
+
+    @property
+    def smtp_message_limit_mb(self) -> float:
+        """The mail provider's limit on the whole encoded message, in decimal
+        MB (Gmail: 25)."""
+        return float(self.values.get("SMTP_MESSAGE_LIMIT_MB", 25))
+
+    @property
+    def email_attachment_limit_bytes(self) -> int:
+        """Largest email MP3, in bytes on disk, that is safe to send.
+
+        Two limits apply. MAX_ATTACHMENT_MB caps the file itself (MiB). The
+        provider caps the encoded message: base64 turns 3 bytes into 4 and
+        adds a CRLF every 76 characters, so a file grows by about 4/3 * 78/76
+        (~1.37x) in the email. A 19.6 MB MP3 passed the 20 MB cap but became
+        ~26.9 MB in the message and Gmail dropped the connection (episode 18,
+        2026-11-27). The smaller of the two wins."""
+        file_cap = self.max_attachment_mb * 1024 * 1024
+        provider_cap = self.smtp_message_limit_mb * 1_000_000 / (4 / 3 * 78 / 76)
+        return int(min(file_cap, provider_cap))
 
     @property
     def monthly_budget(self) -> float | int:
