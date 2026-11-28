@@ -248,10 +248,34 @@ def test_autopilot_auto_confirms_over_cap_render(env, monkeypatch):
 
 
 def test_email_bitrate_steps_down_to_fit_attachment_cap():
-    assert postprod.email_bitrate_for(20 * 60, 20) == 96
-    assert postprod.email_bitrate_for(33 * 60, 20) == 80
-    assert postprod.email_bitrate_for(40 * 60, 20) == 64
-    assert postprod.email_bitrate_for(300 * 60, 20) == postprod.EMAIL_BITRATE_FLOOR_K
+    limit = config.email_attachment_limit_bytes  # Gmail: ~18.3 MB on disk
+    assert postprod.email_bitrate_for(20 * 60, limit) == 96
+    assert postprod.email_bitrate_for(33 * 60, limit) == 64
+    assert postprod.email_bitrate_for(40 * 60, limit) == 56
+    assert postprod.email_bitrate_for(300 * 60, limit) == postprod.EMAIL_BITRATE_FLOOR_K
+
+
+def test_email_attachment_limit_allows_for_base64_in_the_message(monkeypatch):
+    """Episode 18 (1637.4 s) got 96 kbps under the old file-only check: a
+    19.6 MB MP3, ~26.9 MB once base64-encoded, over Gmail's 25 MB, and the
+    send failed. The limit now keeps the encoded message under the provider
+    cap."""
+    monkeypatch.setitem(config.values, "MAX_ATTACHMENT_MB", 20)
+    monkeypatch.setitem(config.values, "SMTP_MESSAGE_LIMIT_MB", 25)
+    limit = config.email_attachment_limit_bytes
+    assert limit < 19_649_710  # episode 18's 96 kbps file must not fit
+    assert limit * 4 / 3 * 78 / 76 <= 25_000_000
+    kbps = postprod.email_bitrate_for(1637.4, limit)
+    assert kbps < 96
+    assert kbps * 1000 / 8 * 1637.4 * 4 / 3 * 78 / 76 < 25_000_000
+
+
+def test_email_attachment_limit_uses_the_smaller_cap(monkeypatch):
+    monkeypatch.setitem(config.values, "SMTP_MESSAGE_LIMIT_MB", 25)
+    monkeypatch.setitem(config.values, "MAX_ATTACHMENT_MB", 10)
+    assert config.email_attachment_limit_bytes == 10 * 1024 * 1024
+    monkeypatch.setitem(config.values, "MAX_ATTACHMENT_MB", 50)
+    assert config.email_attachment_limit_bytes < 19_000_000
 
 
 # --- ComfyUI timeout handling ---------------------------------------------------------
